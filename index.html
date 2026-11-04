@@ -1,0 +1,848 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>クイズ問題チェック</title>
+<style>
+:root{
+  --bg:#f4f5f7; --card:#fff; --ink:#1d2330; --sub:#6b7280; --line:#e3e6ec;
+  --pri:#2b59c3; --pri2:#e8eefc; --ok:#1a9b5a; --ng:#d23c3c; --th:#8a8f99;
+  --qbg:#18213a; --slash:#ffd400;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--ink);
+  font-family:"Hiragino Kaku Gothic ProN","Hiragino Sans","Noto Sans JP",Meiryo,sans-serif;
+  -webkit-text-size-adjust:100%}
+button,input,textarea,select{font:inherit;color:inherit}
+header{position:sticky;top:0;z-index:20;background:#fff;border-bottom:1px solid var(--line)}
+.hbar{max-width:900px;margin:0 auto;display:flex;align-items:center;gap:8px;padding:10px 14px}
+.htitle{font-weight:700;font-size:16px;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.who{font-size:12px;color:var(--sub);text-align:right;line-height:1.3}
+.tabs{max-width:900px;margin:0 auto;display:flex;gap:4px;padding:0 10px;overflow-x:auto}
+.tab{border:0;background:none;padding:9px 12px;font-size:14px;color:var(--sub);border-bottom:3px solid transparent;cursor:pointer;white-space:nowrap}
+.tab.on{color:var(--pri);border-bottom-color:var(--pri);font-weight:700}
+main{max-width:900px;margin:0 auto;padding:14px 14px 110px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:12px}
+h2{font-size:18px;margin:4px 0 12px}
+h3{font-size:15px;margin:18px 0 8px}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;border:1px solid var(--line);background:#fff;border-radius:10px;padding:10px 14px;cursor:pointer;font-size:15px;min-height:44px}
+.btn:hover{background:#f7f8fa}
+.btn.pri{background:var(--pri);border-color:var(--pri);color:#fff}
+.btn.pri:hover{filter:brightness(1.06)}
+.btn.danger{color:var(--ng);border-color:#f0c9c9}
+.btn.sm{padding:6px 10px;min-height:34px;font-size:13px}
+.btn:disabled{opacity:.4;cursor:default}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+label.f{display:block;font-size:13px;color:var(--sub);margin:12px 0 4px}
+input[type=text],input[type=password],input[type=number],textarea,select{width:100%;border:1px solid #cfd4dc;border-radius:10px;padding:10px 12px;background:#fff;font-size:16px}
+textarea{min-height:90px;resize:vertical;line-height:1.6}
+input:focus,textarea:focus{outline:2px solid var(--pri2);border-color:var(--pri)}
+.err{color:var(--ng);font-size:14px;margin-top:10px;min-height:1em}
+.muted{color:var(--sub);font-size:13px}
+.roles{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px}
+.role{border:1px solid var(--line);background:#fff;border-radius:14px;padding:22px 16px;text-align:left;cursor:pointer}
+.role:hover{border-color:var(--pri);background:var(--pri2)}
+.role b{display:block;font-size:20px;margin-bottom:6px}
+.role span{font-size:13px;color:var(--sub);line-height:1.5}
+/* list */
+.search{margin-bottom:10px}
+.qlist{list-style:none;margin:0;padding:0}
+.qitem{display:flex;gap:10px;align-items:flex-start;padding:12px;border:1px solid var(--line);border-radius:10px;background:#fff;margin-bottom:8px;cursor:pointer}
+.qitem:hover{border-color:var(--pri)}
+.qno{flex:0 0 auto;min-width:44px;font-weight:700;color:var(--pri);font-variant-numeric:tabular-nums}
+.qtx{flex:1;min-width:0;font-size:14px;line-height:1.5;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.qbadges{flex:0 0 auto;display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end;max-width:45%}
+.bd{font-size:12px;border-radius:999px;padding:2px 8px;background:#eef0f4;color:#444;white-space:nowrap}
+.bd.o{background:#e2f5ea;color:var(--ok)} .bd.x{background:#fbe4e4;color:var(--ng)} .bd.t{background:#eceef1;color:#555}
+.bd.warn{background:#fff3cd;color:#8a6200}
+.bd.done{background:#e2f5ea;color:var(--ok)}
+/* question box */
+.qmeta{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px}
+.qmeta b{font-size:18px;color:var(--pri)}
+.qbox{background:var(--qbg);color:#fff;border-radius:12px;padding:18px 18px;font-size:22px;line-height:1.9;letter-spacing:.02em;word-break:break-all;user-select:none;-webkit-user-select:none}
+.qbox.sm{font-size:16px;line-height:1.75;padding:12px 14px}
+.qbox.click .ch{cursor:pointer}
+.sl{color:var(--slash);font-weight:900;margin:0 1px;text-shadow:0 0 6px rgba(255,212,0,.5)}
+.hint{font-size:12px;color:var(--sub);margin:6px 2px 0}
+.ansbox{margin-top:12px;display:grid;grid-template-columns:auto 1fr;gap:6px 12px;font-size:16px;line-height:1.6}
+.ansbox dt{color:var(--sub);font-size:13px;padding-top:3px;white-space:nowrap}
+.ansbox dd{margin:0;white-space:pre-wrap;word-break:break-word}
+.ansbox dd.ans{font-weight:700;font-size:18px}
+.judge{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:14px}
+.jb{border:2px solid var(--line);background:#fff;border-radius:14px;padding:12px 4px;font-size:26px;font-weight:800;cursor:pointer;min-height:64px}
+.jb.t{font-size:20px}
+.jb small{display:block;font-size:12px;font-weight:400;color:var(--sub)}
+.jb.o.on{background:var(--ok);border-color:var(--ok);color:#fff}
+.jb.x.on{background:var(--ng);border-color:var(--ng);color:#fff}
+.jb.t.on{background:#555;border-color:#555;color:#fff}
+.jb.on small{color:#fff}
+/* bottom bar */
+.bbar{position:fixed;left:0;right:0;bottom:0;z-index:15;background:rgba(255,255,255,.97);border-top:1px solid var(--line);padding:10px 12px calc(10px + env(safe-area-inset-bottom))}
+.bbar .in{max-width:900px;margin:0 auto;display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
+.bbar .btn{min-height:50px}
+/* entries */
+.entry{border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:8px;background:#fff}
+.ehead{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:6px;font-size:14px}
+.ehead .nm{font-weight:700}
+.ehead .tm{color:var(--sub);font-size:12px;margin-left:auto}
+.summary{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}
+.summary .bd{font-size:14px;padding:4px 12px}
+.cm{border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:8px;background:#fff}
+.cm.done{background:#f3faf6;border-color:#cfe9da}
+.cm .tx{white-space:pre-wrap;word-break:break-word;line-height:1.6;font-size:15px}
+.chk{display:inline-flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;user-select:none}
+.chk input{width:20px;height:20px}
+.empty{color:var(--sub);font-size:14px;padding:12px 0}
+/* owner table */
+.otable{width:100%;border-collapse:collapse;font-size:14px}
+.otable td,.otable th{border-bottom:1px solid var(--line);padding:8px 6px;text-align:left;vertical-align:top}
+.otable th{color:var(--sub);font-weight:400;font-size:12px}
+.otable td.no{width:52px;font-weight:700;color:var(--pri)}
+.otable td.ac{width:120px;white-space:nowrap;text-align:right}
+.clip{overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+/* toast */
+#toast{position:fixed;top:12px;right:12px;z-index:100;background:#1d2330;color:#fff;padding:9px 14px;border-radius:10px;font-size:14px;opacity:0;transform:translateY(-8px);transition:.18s;pointer-events:none;box-shadow:0 6px 20px rgba(0,0,0,.18)}
+#toast.show{opacity:1;transform:none}
+#toast.ok{background:var(--ok)} #toast.ng{background:var(--ng)}
+.loading{text-align:center;color:var(--sub);padding:40px 0}
+.star{flex:0 0 auto;border:1px solid var(--line);background:#fff;border-radius:999px;min-width:40px;height:40px;font-size:20px;line-height:1;cursor:pointer;color:#b8bcc4;padding:0 10px}
+.star.on{color:#f0a400;border-color:#f5d27a;background:#fff8e1}
+.star.big{height:48px;font-size:16px;font-weight:700;padding:0 16px}
+.star.big .s{font-size:22px;margin-right:4px;vertical-align:-2px}
+.livehead{display:flex;align-items:center;flex-wrap:wrap;gap:4px 8px;margin-bottom:10px}
+.livehead b{white-space:nowrap}
+.livehead .muted{flex-basis:100%}
+.livedot{width:10px;height:10px;border-radius:50%;background:#e23b3b;box-shadow:0 0 0 0 rgba(226,59,59,.6);animation:pulse 1.6s infinite}
+@keyframes pulse{70%{box-shadow:0 0 0 10px rgba(226,59,59,0)}100%{box-shadow:0 0 0 0 rgba(226,59,59,0)}}
+.livecard{animation:pop .35s ease}
+@keyframes pop{from{transform:scale(.98);opacity:.4}to{transform:none;opacity:1}}
+.recent .qitem{cursor:default}
+.filterrow{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px}
+code.blk{display:block;white-space:pre-wrap;background:#f1f3f6;border-radius:8px;padding:10px;font-size:12px}
+@media (max-width:560px){
+  .qbox{font-size:20px;padding:14px}
+  .hbar{padding:8px 10px}
+  main{padding:10px 10px 110px}
+  .card{padding:13px}
+  .otable td.ac{width:auto}
+  .qbadges{max-width:40%}
+}
+</style>
+</head>
+<body>
+<header>
+  <div class="hbar">
+    <div class="htitle" id="htitle">クイズ問題チェック</div>
+    <div class="who" id="who"></div>
+    <button class="btn sm" id="logout" style="display:none">ログアウト</button>
+  </div>
+  <nav class="tabs" id="tabs"></nav>
+</header>
+<main id="app"><div class="loading">読み込み中…</div></main>
+<div id="bbarHost"></div>
+<div id="toast"></div>
+
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script>
+/* =====================================================================
+   ★ Firebase の設定をここに貼り付けてください（Firebaseコンソール →
+     プロジェクトの設定 → マイアプリ → 「SDK の設定と構成」の firebaseConfig）
+   ===================================================================== */
+const FIREBASE_CONFIG = {
+  apiKey: "AIzaSyCda4PPxesGPECdm995OYt_3IWuw4SE66U",
+  authDomain: "quizcheck-saitama.firebaseapp.com",
+  projectId: "quizcheck-saitama",
+  storageBucket: "quizcheck-saitama.firebasestorage.app",
+  messagingSenderId: "631854095467",
+  appId: "1:631854095467:web:bc36a1b4245124223ae52e"
+};
+/* 例:
+const FIREBASE_CONFIG = {
+  apiKey: "AIza....",
+  authDomain: "xxxx.firebaseapp.com",
+  projectId: "xxxx",
+  storageBucket: "xxxx.appspot.com",
+  messagingSenderId: "....",
+  appId: "...."
+};
+*/
+const COLL_PREFIX = "qc_";   // Firestore のコレクション名の接頭辞（他アプリと同じプロジェクトでも衝突しないように）
+
+/* ------------------------- utilities ------------------------- */
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const RES = { o:{mark:"○",label:"正解",cls:"o"}, x:{mark:"×",label:"誤答",cls:"x"}, t:{mark:"スルー",label:"スルー",cls:"t"} };
+const ROLE_NAME = { owner:"オーナー", host:"ホスト", guest:"ゲスト" };
+function fmt(ms){ if(!ms) return ""; const d=new Date(ms); const p=n=>String(n).padStart(2,"0");
+  return `${d.getMonth()+1}/${d.getDate()} ${p(d.getHours())}:${p(d.getMinutes())}`; }
+function toast(msg, kind){ const t=$("#toast"); t.textContent=msg; t.className="show "+(kind||"");
+  clearTimeout(t._h); t._h=setTimeout(()=>{ t.className=(kind||""); },1300); }
+function ls(k,v){ try{ if(v===undefined) return JSON.parse(localStorage.getItem(k)); localStorage.setItem(k,JSON.stringify(v)); }catch(e){ return null; } }
+function ss(k,v){ try{ if(v===undefined) return JSON.parse(sessionStorage.getItem(k)); if(v===null) sessionStorage.removeItem(k); else sessionStorage.setItem(k,JSON.stringify(v)); }catch(e){ return null; } }
+
+/* SHA-256 (file:// でも動くよう自前実装) */
+const SHA_K = (()=>{ const k=[]; let n=2; const isP=x=>{for(let i=2;i*i<=x;i++) if(x%i===0) return false; return true;};
+  while(k.length<64){ if(isP(n)) k.push((Math.cbrt(n)%1)*2**32>>>0); n++; } return k; })();
+function sha256hex(str){
+  const msg=new TextEncoder().encode(str), l=msg.length, nb=((l+9+63)>>6);
+  const buf=new Uint8Array(nb*64); buf.set(msg); buf[l]=0x80;
+  const dv=new DataView(buf.buffer); const bits=l*8;
+  dv.setUint32(buf.length-4, bits>>>0); dv.setUint32(buf.length-8, Math.floor(bits/4294967296));
+  let H=[0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19];
+  const W=new Uint32Array(64), r=(x,n)=>(x>>>n)|(x<<(32-n));
+  for(let b=0;b<nb;b++){
+    for(let t=0;t<16;t++) W[t]=dv.getUint32(b*64+t*4);
+    for(let t=16;t<64;t++){ const x=W[t-15],y=W[t-2];
+      W[t]=(W[t-16]+(r(x,7)^r(x,18)^(x>>>3))+W[t-7]+(r(y,17)^r(y,19)^(y>>>10)))>>>0; }
+    let [a,bb,c,d,e,f,g,h]=H;
+    for(let t=0;t<64;t++){
+      const t1=(h+(r(e,6)^r(e,11)^r(e,25))+((e&f)^(~e&g))+SHA_K[t]+W[t])>>>0;
+      const t2=((r(a,2)^r(a,13)^r(a,22))+((a&bb)^(a&c)^(bb&c)))>>>0;
+      h=g; g=f; f=e; e=(d+t1)>>>0; d=c; c=bb; bb=a; a=(t1+t2)>>>0;
+    }
+    H=[H[0]+a,H[1]+bb,H[2]+c,H[3]+d,H[4]+e,H[5]+f,H[6]+g,H[7]+h].map(v=>v>>>0);
+  }
+  return H.map(v=>v.toString(16).padStart(8,"0")).join("");
+}
+const pwHash = (role,pw) => sha256hex("quizcheck-v1|"+role+"|"+pw);
+const userKey = (region,name) => sha256hex("u|"+region.trim()+"|"+name.trim()).slice(0,20);
+
+/* ------------------------- state ------------------------- */
+const S = {
+  settings:null, questions:[], rehearsals:[], comments:[],
+  live:null,          // {qid, at} 今読まれている問題
+  bookmarks:[],       // 全ゲストのブックマーク（ホスト・オーナー用）
+  myBm:new Set(),     // 自分のブックマーク（ゲスト用）
+  onlyBm:false,
+  loaded:{q:false,r:false,c:false},
+  me:null,            // {role,name,region,key}
+  view:"select",      // select | login | list | rehearsal | detail | gdetail | oq | oqedit | oset
+  mode:null,          // host: rehearsal|results ; owner: oq|results|oset ; guest: comment
+  loginRole:null, qid:null, search:"", onlyOpen:false,
+  draft:null,         // rehearsal draft {qid,result,slashes:Set}
+  editingId:null, editQ:null
+};
+let db=null, unsubs=[];
+const col = n => db.collection(COLL_PREFIX+n);
+
+/* ------------------------- firebase ------------------------- */
+function getConfig(){ return FIREBASE_CONFIG || ls("qc_fbconfig"); }
+async function boot(){
+  const cfg=getConfig();
+  if(!cfg || typeof firebase==="undefined"){ renderSetup(typeof firebase==="undefined"); return; }
+  try{
+    firebase.initializeApp(cfg);
+    db=firebase.firestore();
+    try{ await db.enablePersistence({synchronizeTabs:true}); }catch(e){}
+    try{ await firebase.auth().signInAnonymously(); }catch(e){ console.warn("匿名認証が無効です（ルール次第で書き込めない場合があります）", e); }
+  }catch(e){ renderSetup(false, "Firebaseの初期化に失敗しました: "+e.message); return; }
+  const timer=setTimeout(()=>{ if(!S.settings) $("#app").innerHTML='<div class="card"><b>データに接続できません。</b><p class="muted">通信環境・Firebase設定・Firestoreのルールを確認してください。</p></div>'; },10000);
+  col("config").doc("settings").onSnapshot(s=>{
+    clearTimeout(timer);
+    S.settings=s.data()||{};
+    $("#htitle").textContent=S.settings.title||"クイズ問題チェック";
+    document.title=S.settings.title||"クイズ問題チェック";
+    if(!S.me){
+      const sv=ss("qc_session");
+      if(sv && sv.h && S.settings[sv.role+"Hash"]===sv.h){ startSession(sv); return; }
+      if(S.view==="select"||S.view==="login") render();
+    } else {
+      // パスワード変更されたらログアウト（オーナー以外）
+      const sv=ss("qc_session");
+      if(sv && S.me.role!=="owner" && S.settings[sv.role+"Hash"]!==sv.h){ logout("パスワードが変更されました。再ログインしてください"); }
+    }
+  }, e=>{ clearTimeout(timer); $("#app").innerHTML='<div class="card"><b>読み込みエラー</b><p class="muted">'+esc(e.message)+'</p><p class="muted">Firestoreのセキュリティルールを確認してください。</p></div>'; });
+}
+function subscribeAll(){
+  unsubs.forEach(u=>u()); unsubs=[];
+  unsubs.push(col("questions").onSnapshot(s=>{
+    S.questions=s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(a.no??0)-(b.no??0)||(a.createdAt??0)-(b.createdAt??0));
+    S.loaded.q=true; live();
+  }, e=>toast("問題の読込エラー","ng")));
+  if(S.me.role!=="guest") unsubs.push(col("rehearsals").onSnapshot(s=>{
+    S.rehearsals=s.docs.map(d=>({id:d.id,...d.data()})); S.loaded.r=true; live();
+  }, e=>toast("結果の読込エラー","ng")));
+  unsubs.push(col("comments").onSnapshot(s=>{
+    S.comments=s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(a.createdAt??0)-(b.createdAt??0));
+    S.loaded.c=true; live();
+  }, e=>toast("コメントの読込エラー","ng")));
+  unsubs.push(col("config").doc("live").onSnapshot(s=>{
+    const prev=S.live?.qid; S.live=s.data()||null;
+    live(prev!==S.live?.qid);
+  }, e=>{}));
+  if(S.me.role==="guest") unsubs.push(col("bookmarks").doc(S.me.key).onSnapshot(s=>{
+    S.myBm=new Set((s.data()||{}).qids||[]); live();
+  }, e=>{}));
+  else unsubs.push(col("bookmarks").onSnapshot(s=>{
+    S.bookmarks=s.docs.map(d=>({id:d.id,...d.data()})); live();
+  }, e=>{}));
+}
+/* 公開（＝ホストが○×スルーを押して読まれた）判定 */
+const isReleased = q => !!(S.settings?.releaseAll || q.releasedAt);
+const navList = () => S.me && S.me.role==="guest" ? S.questions.filter(isReleased) : S.questions;
+function releaseQuestion(q){
+  const now=Date.now();
+  if(!q.releasedAt) col("questions").doc(q.id).update({releasedAt:now}).catch(()=>{});
+  col("config").doc("live").set({qid:q.id,at:now}).catch(()=>{});
+}
+function toggleBookmark(qid){
+  const FV=firebase.firestore.FieldValue, has=S.myBm.has(qid);
+  has?S.myBm.delete(qid):S.myBm.add(qid);
+  col("bookmarks").doc(S.me.key).set({name:S.me.name,region:S.me.region,updatedAt:Date.now(),
+    qids: has?FV.arrayRemove(qid):FV.arrayUnion(qid)},{merge:true})
+    .then(()=>toast(has?"ブックマークを外しました":"★ ブックマークしました","ok")).catch(()=>toast("保存に失敗しました","ng"));
+  live();
+}
+const starBtn = (qid, big) => { const on=S.myBm.has(qid);
+  return big ? `<button class="star big ${on?"on":""}" data-star="${qid}"><span class="s">${on?"★":"☆"}</span>${on?"ブックマーク中":"ブックマーク"}</button>`
+             : `<button class="star ${on?"on":""}" data-star="${qid}" aria-label="ブックマーク">${on?"★":"☆"}</button>`; };
+function bindStars(root){ (root||document).querySelectorAll("[data-star]").forEach(b=>b.onclick=e=>{ e.stopPropagation(); toggleBookmark(b.dataset.star); }); }
+
+/* ------------------------- session ------------------------- */
+function startSession(sv){
+  S.me={role:sv.role,name:sv.name||"",region:sv.region||"",key:sv.role==="owner"?"owner":userKey(sv.region,sv.name)};
+  ss("qc_session",sv);
+  S.mode = sv.role==="host"?"rehearsal": sv.role==="guest"?"live":"oq";
+  S.view = sv.role==="owner"?"oq": sv.role==="guest"?"live":"list";
+  subscribeAll(); render();
+}
+function logout(msg){
+  unsubs.forEach(u=>u()); unsubs=[]; ss("qc_session",null);
+  S.me=null; S.view="select"; S.mode=null; S.qid=null; S.draft=null;
+  render(); if(msg) toast(msg);
+}
+$("#logout").onclick=()=>{ if(S.view==="rehearsal") saveDraft(); logout(); };
+
+/* ------------------------- header / tabs ------------------------- */
+function renderHeader(){
+  const who=$("#who"), lo=$("#logout"), tabs=$("#tabs");
+  if(!S.me){ who.innerHTML=""; lo.style.display="none"; tabs.innerHTML=""; return; }
+  lo.style.display="";
+  who.innerHTML = S.me.role==="owner" ? "<b>オーナー</b>" :
+    `<b>${ROLE_NAME[S.me.role]}</b><br>${esc(S.me.region)}／${esc(S.me.name)}`;
+  let t=[];
+  if(S.me.role==="owner") t=[["oq","問題管理"],["results","結果閲覧"],["oset","設定・パスワード"]];
+  if(S.me.role==="host") t=[["rehearsal","リハーサル"],["results","結果閲覧"]];
+  if(S.me.role==="guest") t=[["live","チェック会（今の問題）"],["comment","問題一覧・コメント"]];
+  tabs.innerHTML=t.map(([k,l])=>`<button class="tab ${S.mode===k?"on":""}" data-m="${k}">${l}</button>`).join("");
+  tabs.querySelectorAll(".tab").forEach(b=>b.onclick=()=>{
+    if(!leaveCheck()) return;
+    if(S.view==="rehearsal") saveDraft();
+    S.mode=b.dataset.m; S.qid=null; S.editingId=null;
+    S.view = S.mode==="oq"?"oq": S.mode==="oset"?"oset": S.mode==="live"?"live":"list";
+    render(); window.scrollTo(0,0);
+  });
+}
+function setBbar(html){ $("#bbarHost").innerHTML=html||""; }
+
+/* ------------------------- render dispatcher ------------------------- */
+function render(){
+  renderHeader(); setBbar("");
+  const v=S.view;
+  if(!S.me){ v==="login"?renderLogin():renderSelect(); return; }
+  if(v==="list") renderList();
+  else if(v==="live") renderLive();
+  else if(v==="rehearsal") renderRehearsal();
+  else if(v==="detail") renderDetail();
+  else if(v==="gdetail") renderGuestDetail();
+  else if(v==="oq") renderOwnerQuestions();
+  else if(v==="oqedit") renderOwnerEdit();
+  else if(v==="oset") renderOwnerSettings();
+}
+// リアルタイム更新時：入力中の内容を壊さないよう部分更新
+function live(liveChanged){
+  if(!S.me) return;
+  if(S.view==="list") renderListBody();
+  else if(S.view==="live") renderLiveBody(liveChanged);
+  else if(S.view==="detail") renderDetailLive();
+  else if(S.view==="gdetail"){
+    const q=qById(S.qid);
+    if(!q||!isReleased(q)){ S.view="list"; render(); return; }
+    renderGuestComments(); const st=$("#gstar"); if(st){ st.innerHTML=starBtn(q.id,true); bindStars(st); }
+  }
+  else if(S.view==="oq") renderOwnerQList();
+  else if(S.view==="rehearsal" && !qById(S.qid)) { S.view="list"; render(); }
+}
+const qById = id => S.questions.find(q=>q.id===id);
+const qIndex = id => navList().findIndex(q=>q.id===id);
+
+/* ------------------------- setup (no config) ------------------------- */
+function renderSetup(sdkMissing, msg){
+  renderHeader();
+  $("#app").innerHTML=`<div class="card"><h2>初期設定（Firebase）</h2>
+  ${sdkMissing?'<p class="err">Firebase SDKを読み込めませんでした。インターネット接続を確認してください。</p>':""}
+  ${msg?`<p class="err">${esc(msg)}</p>`:""}
+  <p class="muted">このHTMLファイル内の <code>FIREBASE_CONFIG</code> に設定を書き込むと、リンクを開いた全員がすぐ使えるようになります。<br>動作確認用に、下に firebaseConfig を貼り付けてこのブラウザだけで試すこともできます。</p>
+  <label class="f">firebaseConfig（{ apiKey: … } の部分をそのまま貼り付け）</label>
+  <textarea id="cfg" style="min-height:160px;font-family:monospace;font-size:13px"></textarea>
+  <div class="row" style="margin-top:10px"><button class="btn pri" id="cfgsave">このブラウザで試す</button></div>
+  <div class="err" id="cfgerr"></div></div>`;
+  $("#cfgsave").onclick=()=>{
+    const txt=$("#cfg").value; const m=txt.match(/\{[\s\S]*\}/);
+    try{ const o=Function('"use strict";return ('+m[0]+')')(); if(!o.projectId) throw 0; ls("qc_fbconfig",o); location.reload(); }
+    catch(e){ $("#cfgerr").textContent="読み取れませんでした。{ から } までを貼り付けてください。"; }
+  };
+}
+
+/* ------------------------- login ------------------------- */
+function renderSelect(){
+  $("#app").innerHTML=`<div class="card"><h2>ユーザー種別を選択</h2>
+  <div class="roles">
+    <button class="role" data-r="owner"><b>オーナー</b><span>問題の登録・全データの閲覧・パスワード設定</span></button>
+    <button class="role" data-r="host"><b>ホスト</b><span>リハーサル（スラッシュ・○×入力）と結果閲覧</span></button>
+    <button class="role" data-r="guest"><b>ゲスト</b><span>問題へのコメント入力</span></button>
+  </div></div>`;
+  document.querySelectorAll(".role").forEach(b=>b.onclick=()=>{ S.loginRole=b.dataset.r; S.view="login"; render(); });
+}
+function renderLogin(){
+  const r=S.loginRole, st=S.settings||{}, first = r==="owner" && !st.ownerHash;
+  const notSet = r!=="owner" && !st[r+"Hash"];
+  const prev=ls("qc_profile_"+r)||{};
+  $("#app").innerHTML=`<div class="card" style="max-width:480px;margin:0 auto">
+  <h2>${ROLE_NAME[r]}としてログイン</h2>
+  ${first?'<p class="muted">初回設定です。オーナーパスワードを決めて入力してください。</p>':""}
+  ${notSet?'<p class="err">'+ROLE_NAME[r]+'パスワードがまだ設定されていません。オーナーに設定を依頼してください。</p>':""}
+  <form id="lf">
+  ${r!=="owner"?`<label class="f">所属（地域名）</label><input type="text" id="lregion" value="${esc(prev.region||"")}" autocomplete="organization">
+  <label class="f">名前</label><input type="text" id="lname" value="${esc(prev.name||"")}" autocomplete="name">`:""}
+  <label class="f">${ROLE_NAME[r]}パスワード</label><input type="password" id="lpw" autocomplete="current-password">
+  ${first?'<label class="f">パスワード（確認）</label><input type="password" id="lpw2">':""}
+  <div class="err" id="lerr"></div>
+  <div class="row" style="margin-top:14px"><button type="button" class="btn" id="lback">戻る</button><button class="btn pri" style="flex:1">${first?"設定してログイン":"ログイン"}</button></div>
+  </form></div>`;
+  $("#lback").onclick=()=>{ S.view="select"; render(); };
+  $("#lf").onsubmit=async ev=>{
+    ev.preventDefault();
+    const pw=$("#lpw").value, err=$("#lerr");
+    let name="",region="";
+    if(r!=="owner"){ region=$("#lregion").value.trim(); name=$("#lname").value.trim();
+      if(!region||!name){ err.textContent="所属（地域名）と名前を入力してください"; return; } }
+    if(!pw){ err.textContent="パスワードを入力してください"; return; }
+    const h=pwHash(r,pw);
+    if(first){
+      if(pw!==$("#lpw2").value){ err.textContent="確認用パスワードが一致しません"; return; }
+      try{ await col("config").doc("settings").set({ownerHash:h},{merge:true}); }
+      catch(e){ err.textContent="保存できませんでした: "+e.message; return; }
+    } else if(st[r+"Hash"]!==h){ err.textContent="パスワードが違います"; return; }
+    if(r!=="owner") ls("qc_profile_"+r,{region,name});
+    startSession({role:r,name,region,h});
+  };
+}
+
+/* ------------------------- question list ------------------------- */
+function renderList(){
+  const titles={rehearsal:"リハーサル：問題一覧",results:"結果閲覧：問題一覧",comment:"コメント入力：問題一覧"};
+  $("#app").innerHTML=`<h2>${titles[S.mode]}</h2>
+  <div class="filterrow">
+    <input type="text" class="search" id="srch" placeholder="問題文・解答で検索" value="${esc(S.search)}" style="flex:1;min-width:180px;margin:0">
+    ${S.mode==="results"?`<label class="chk"><input type="checkbox" id="onlyOpen" ${S.onlyOpen?"checked":""}>未対応コメントありのみ</label>`:""}
+    ${S.mode==="comment"?`<label class="chk"><input type="checkbox" id="onlyBm" ${S.onlyBm?"checked":""}>★ブックマークのみ</label>`:""}
+  </div>
+  ${S.mode==="comment"?'<p class="muted" style="margin:0 0 8px">読まれた問題が順次ここに追加されます。☆を押すとブックマークできます。</p>':""}
+  <ul class="qlist" id="qlist"></ul>`;
+  $("#srch").oninput=e=>{ S.search=e.target.value; renderListBody(); };
+  if($("#onlyOpen")) $("#onlyOpen").onchange=e=>{ S.onlyOpen=e.target.checked; renderListBody(); };
+  if($("#onlyBm")) $("#onlyBm").onchange=e=>{ S.onlyBm=e.target.checked; renderListBody(); };
+  renderListBody();
+}
+function filteredQuestions(){
+  const k=S.search.trim().toLowerCase();
+  return navList().filter(q=>{
+    if(S.mode==="comment" && S.onlyBm && !S.myBm.has(q.id)) return false;
+    if(k &&!((q.question||"")+(q.answer||"")+(q.alt||"")+(q.no??"")).toLowerCase().includes(k)) return false;
+    if(S.mode==="results" && S.onlyOpen && !S.comments.some(c=>c.qid===q.id&&!c.done)) return false;
+    return true;
+  });
+}
+function renderListBody(){
+  const ul=$("#qlist"); if(!ul) return;
+  if(!S.loaded.q){ ul.innerHTML='<div class="loading">読み込み中…</div>'; return; }
+  const qs=filteredQuestions();
+  if(!qs.length){ ul.innerHTML=`<div class="empty">${
+    S.mode==="comment" ? (navList().length?"該当する問題がありません":"まだ読まれた問題はありません。チェック会で読まれると、ここに追加されます。")
+    : S.questions.length?"該当する問題がありません":"問題がまだ登録されていません"}</div>`; return; }
+  ul.innerHTML=qs.map(q=>{
+    let b="";
+    const cms=S.comments.filter(c=>c.qid===q.id), open=cms.filter(c=>!c.done).length;
+    if(S.mode==="rehearsal"){
+      const mine=S.rehearsals.find(r=>r.qid===q.id&&r.userKey===S.me.key);
+      if(mine&&mine.result) b+=`<span class="bd ${RES[mine.result].cls}">${RES[mine.result].mark}</span>`;
+      if(mine&&mine.slashes&&mine.slashes.length) b+=`<span class="bd">/ ${mine.slashes.length}</span>`;
+    } else if(S.mode==="results"){
+      const rs=S.rehearsals.filter(r=>r.qid===q.id&&r.result);
+      ["o","x","t"].forEach(k=>{ const n=rs.filter(r=>r.result===k).length; if(n) b+=`<span class="bd ${k}">${RES[k].mark}${n}</span>`; });
+      if(cms.length) b+=`<span class="bd ${open?"warn":"done"}">💬${cms.length}${open?`（未${open}）`:""}</span>`;
+      const nb=S.bookmarks.filter(x=>(x.qids||[]).includes(q.id)).length;
+      if(nb) b+=`<span class="bd warn">★${nb}</span>`;
+    } else {
+      if(cms.length) b+=`<span class="bd">💬${cms.length}</span>`;
+      if(cms.some(c=>c.authorKey===S.me.key)) b+=`<span class="bd o">投稿済</span>`;
+    }
+    const st = S.mode==="comment" ? starBtn(q.id) : "";
+    return `<li class="qitem" data-id="${q.id}">${st}<div class="qno">${esc(q.no??"")}</div><div class="qtx">${esc(q.question)}</div><div class="qbadges">${b}</div></li>`;
+  }).join("");
+  ul.querySelectorAll(".qitem").forEach(li=>li.onclick=()=>openQuestion(li.dataset.id));
+  bindStars(ul);
+}
+function openQuestion(id){
+  S.qid=id; S.editingId=null;
+  S.view = S.mode==="rehearsal"?"rehearsal": S.mode==="comment"?"gdetail":"detail";
+  if(S.view==="rehearsal") loadDraft();
+  render(); window.scrollTo(0,0);
+}
+
+/* ------------------------- question text with slashes ------------------------- */
+function qTextHTML(text, slashes){
+  const set = slashes instanceof Set ? slashes : new Set(slashes||[]);
+  const chars=Array.from(text||"");
+  return chars.map((c,i)=> (c==="\n"?'<br>':`<span class="ch" data-i="${i}">${esc(c)}</span>`) + (set.has(i)?'<span class="sl">/</span>':"")).join("");
+}
+function bindSlashBox(box, getText, set, onChange){
+  box.onclick=e=>{
+    const ch=e.target.closest(".ch"); if(!ch) return;
+    const i=+ch.dataset.i, rect=ch.getBoundingClientRect();
+    const g = (e.clientX < rect.left+rect.width/2) ? i-1 : i;   // 文字の左半分→直前の間、右半分→直後の間
+    const n=Array.from(getText()).length;
+    if(g<0||g>=n-1) return;
+    set.has(g)?set.delete(g):set.add(g);
+    onChange();
+  };
+}
+function answerHTML(q){
+  return `<dl class="ansbox">
+    <dt>解答</dt><dd class="ans">${esc(q.answer)||'<span class="muted">（未登録）</span>'}</dd>
+    ${q.alt?`<dt>別解</dt><dd>${esc(q.alt)}</dd>`:""}
+    ${q.note?`<dt>備考</dt><dd>${esc(q.note)}</dd>`:""}
+  </dl>`;
+}
+function navBar(){
+  const i=qIndex(S.qid), n=navList().length;
+  setBbar(`<div class="bbar"><div class="in">
+    <button class="btn" id="nprev" ${i<=0?"disabled":""}>◀ 前の問題</button>
+    <button class="btn" id="nlist">一覧に戻る</button>
+    <button class="btn" id="nnext" ${i>=n-1?"disabled":""}>次の問題 ▶</button></div></div>`);
+  const go=d=>{
+    if(!leaveCheck()) return;
+    if(S.view==="rehearsal") saveDraft();
+    if(d===0){ S.view="list"; S.qid=null; render(); return; }
+    const L=navList(), j=qIndex(S.qid)+d; if(j<0||j>=L.length) return;
+    openQuestion(L[j].id);
+  };
+  $("#nprev").onclick=()=>go(-1); $("#nnext").onclick=()=>go(1); $("#nlist").onclick=()=>go(0);
+}
+function qHeader(q){ const i=qIndex(q.id); return `<div class="qmeta"><b>No.${esc(q.no??"")}</b><span class="muted">${i+1} / ${navList().length}</span></div>`; }
+
+/* ------------------------- host: rehearsal ------------------------- */
+function myRehearsal(qid){ return S.rehearsals.find(r=>r.qid===qid&&r.userKey===S.me.key); }
+function loadDraft(){
+  const m=myRehearsal(S.qid);
+  S.draft={qid:S.qid,result:m?.result||"",slashes:new Set(m?.slashes||[])};
+}
+function saveDraft(){
+  const d=S.draft; if(!d||!d.qid) return;
+  const q=qById(d.qid); if(!q) return;
+  const m=myRehearsal(d.qid);
+  const sl=[...d.slashes].sort((a,b)=>a-b);
+  const same = m ? (m.result||"")===d.result && JSON.stringify(m.slashes||[])===JSON.stringify(sl)
+                 : (!d.result && !sl.length);
+  S.draft=null;
+  if(same) return;
+  const docId=d.qid+"__"+S.me.key;
+  col("rehearsals").doc(docId).set({
+    qid:d.qid, qno:q.no??null, userKey:S.me.key, name:S.me.name, region:S.me.region,
+    result:d.result, slashes:sl, updatedAt:Date.now()
+  }).then(()=>toast("✓ 送信しました","ok")).catch(e=>toast("送信に失敗しました","ng"));
+}
+function renderRehearsal(){
+  const q=qById(S.qid); if(!q){ S.view="list"; render(); return; }
+  if(!S.draft||S.draft.qid!==q.id) loadDraft();
+  const m=myRehearsal(q.id);
+  $("#app").innerHTML=`<div class="card">${qHeader(q)}
+    <div class="qbox click" id="qbox"></div>
+    <div class="row" style="justify-content:space-between;margin-top:4px">
+      <p class="hint">文字の間をタップすると「/」が入ります（もう一度タップで消去）</p>
+      <button class="btn sm" id="clrsl">スラッシュ全消去</button></div>
+    ${answerHTML(q)}
+    <div class="judge">
+      ${["o","x","t"].map(k=>`<button class="jb ${k} ${S.draft.result===k?"on":""}" data-k="${k}">${RES[k].mark}<small>${k==="t"?"&nbsp;":RES[k].label}</small></button>`).join("")}
+    </div>
+    <p class="muted" style="margin-top:10px">入力者：${esc(S.me.region)}／${esc(S.me.name)}${m?`　前回送信 ${fmt(m.updatedAt)}`:""}<br>「前の問題」「次の問題」「一覧に戻る」を押すと自動で送信されます。</p>
+  </div>`;
+  const box=$("#qbox"); const paint=()=>box.innerHTML=qTextHTML(q.question,S.draft.slashes);
+  paint(); bindSlashBox(box,()=>q.question||"",S.draft.slashes,paint);
+  $("#clrsl").onclick=()=>{ S.draft.slashes.clear(); paint(); };
+  document.querySelectorAll(".jb").forEach(b=>b.onclick=()=>{
+    const k=b.dataset.k; S.draft.result = S.draft.result===k?"":k;
+    if(S.draft.result) releaseQuestion(q);   // ○×スルーを押した＝読まれた問題としてゲストに公開
+    document.querySelectorAll(".jb").forEach(x=>x.classList.toggle("on",x.dataset.k===S.draft.result));
+  });
+  navBar();
+}
+
+/* ------------------------- host/owner: results detail ------------------------- */
+function renderDetail(){
+  const q=qById(S.qid); if(!q){ S.view="list"; render(); return; }
+  $("#app").innerHTML=`<div class="card">${qHeader(q)}
+    <div class="qbox sm">${qTextHTML(q.question,[])}</div>${answerHTML(q)}</div>
+    <div class="card"><h3 style="margin-top:0">リハーサル入力</h3><div id="rlive"></div></div>
+    <div class="card"><h3 style="margin-top:0">ゲストのコメント</h3><div id="clive"></div></div>`;
+  renderDetailLive(); navBar();
+}
+function renderDetailLive(){
+  const q=qById(S.qid); if(!q){ S.view="list"; render(); return; }
+  const rl=$("#rlive"), cl=$("#clive"); if(!rl) return;
+  const rs=S.rehearsals.filter(r=>r.qid===q.id).sort((a,b)=>(b.updatedAt||0)-(a.updatedAt||0));
+  const cnt=k=>rs.filter(r=>r.result===k).length;
+  rl.innerHTML = rs.length ? `<div class="summary">${["o","x","t"].map(k=>`<span class="bd ${k}">${RES[k].mark} ${cnt(k)}</span>`).join("")}<span class="bd">未選択 ${rs.filter(r=>!r.result).length}</span></div>`+
+    rs.map(r=>`<div class="entry"><div class="ehead"><span class="nm">${esc(r.name)}</span><span class="muted">${esc(r.region)}</span>
+      ${r.result?`<span class="bd ${RES[r.result].cls}">${RES[r.result].mark}</span>`:'<span class="bd">結果未選択</span>'}
+      <span class="bd">/ ${(r.slashes||[]).length}</span><span class="tm">${fmt(r.updatedAt)}</span></div>
+      <div class="qbox sm">${qTextHTML(q.question,r.slashes)}</div></div>`).join("")
+    : '<div class="empty">まだ入力はありません</div>';
+  const cms=S.comments.filter(c=>c.qid===q.id);
+  const bms=S.bookmarks.filter(x=>(x.qids||[]).includes(q.id));
+  const bmHTML = `<p class="muted" style="margin:0 0 10px">★ブックマーク：${bms.length?bms.map(x=>`${esc(x.name)}（${esc(x.region)}）`).join("、"):"なし"}</p>`;
+  cl.innerHTML = bmHTML + (cms.length ? cms.map(c=>`<div class="cm ${c.done?"done":""}">
+      <div class="ehead"><span class="nm">${esc(c.name)}</span><span class="muted">${esc(c.region)}</span>
+      <span class="tm">投稿 ${fmt(c.createdAt)}${c.updatedAt&&c.updatedAt!==c.createdAt?`／編集 ${fmt(c.updatedAt)}`:""}</span></div>
+      <div class="tx">${esc(c.text)}</div>
+      <div class="row" style="margin-top:8px;justify-content:space-between">
+        <label class="chk"><input type="checkbox" data-done="${c.id}" ${c.done?"checked":""}>対応済み${c.done&&c.doneBy?`<span class="muted">（${esc(c.doneBy)} ${fmt(c.doneAt)}）</span>`:""}</label>
+        ${S.me.role==="owner"?`<button class="btn sm danger" data-del="${c.id}">削除</button>`:""}
+      </div></div>`).join("")
+    : '<div class="empty">コメントはありません</div>');
+  cl.querySelectorAll("[data-done]").forEach(cb=>cb.onchange=()=>{
+    const v=cb.checked, who=S.me.role==="owner"?"オーナー":S.me.name;
+    col("comments").doc(cb.dataset.done).update(v?{done:true,doneBy:who,doneAt:Date.now()}:{done:false,doneBy:"",doneAt:null})
+      .then(()=>toast(v?"✓ 対応済みにしました":"未対応に戻しました","ok")).catch(()=>toast("更新に失敗しました","ng"));
+  });
+  cl.querySelectorAll("[data-del]").forEach(b=>b.onclick=()=>{
+    if(!confirm("このコメントを削除しますか？")) return;
+    col("comments").doc(b.dataset.del).delete().then(()=>toast("削除しました")).catch(()=>toast("削除に失敗しました","ng"));
+  });
+}
+
+/* ------------------------- guest: comments ------------------------- */
+function leaveCheck(){
+  if(S.view!=="gdetail") return true;
+  const nt=$("#newc"), et=document.querySelector("[data-edtx]");
+  const dirty=(nt&&nt.value.trim()) || (et && et.value!==(S.comments.find(c=>c.id===S.editingId)?.text||""));
+  return !dirty || confirm("保存していないコメントがあります。破棄して移動しますか？");
+}
+function renderGuestDetail(){
+  const q=qById(S.qid); if(!q||!isReleased(q)){ S.view="list"; render(); return; }
+  $("#app").innerHTML=`<div class="card">${qHeader(q)}
+    <div class="qbox sm">${qTextHTML(q.question,[])}</div>${answerHTML(q)}
+    <div class="row" id="gstar" style="margin-top:12px">${starBtn(q.id,true)}</div></div>
+    <div class="card"><h3 style="margin-top:0">コメント</h3><div id="glive"></div>
+      <h3>新しいコメント</h3>
+      <textarea id="newc" placeholder="問題文・解答・別解などへの指摘や意見を入力"></textarea>
+      <div class="row" style="margin-top:8px;justify-content:space-between">
+        <span class="muted">投稿者：${esc(S.me.region)}／${esc(S.me.name)}</span>
+        <button class="btn pri" id="savec">保存</button></div>
+    </div>`;
+  $("#savec").onclick=()=>{
+    const t=$("#newc").value.trim(); if(!t){ toast("コメントを入力してください"); return; }
+    const now=Date.now(), btn=$("#savec"); btn.disabled=true;
+    col("comments").add({qid:q.id,qno:q.no??null,authorKey:S.me.key,name:S.me.name,region:S.me.region,text:t,createdAt:now,updatedAt:now,done:false})
+      .then(()=>{ toast("✓ 送信しました","ok"); }).catch(()=>toast("送信に失敗しました","ng")).finally(()=>{ if($("#savec")) $("#savec").disabled=false; });
+    $("#newc").value="";
+  };
+  renderGuestComments(); bindStars($("#gstar")); navBar();
+}
+
+/* ------------------------- guest: live (チェック会中) ------------------------- */
+function renderLive(){
+  $("#app").innerHTML=`<div class="livehead"><span class="livedot"></span><b>いま読まれた問題</b><span class="muted">（ホストが判定すると自動で切り替わります）</span></div>
+    <div id="livebox"></div>
+    <h3>これまでに読まれた問題</h3><ul class="qlist" id="recent"></ul>`;
+  renderLiveBody(false);
+}
+function renderLiveBody(changed){
+  const box=$("#livebox"), rc=$("#recent"); if(!box) return;
+  const q = S.live && qById(S.live.qid);
+  if(!S.loaded.q){ box.innerHTML='<div class="loading">読み込み中…</div>'; }
+  else if(!q || !isReleased(q)){ box.innerHTML='<div class="card"><div class="empty">まだ問題は読まれていません。チェック会が始まるとここに表示されます。</div></div>'; }
+  else {
+    box.innerHTML=`<div class="card ${changed?"livecard":""}"><div class="qmeta"><b>No.${esc(q.no??"")}</b><span class="muted">${fmt(S.live.at)}</span></div>
+      <div class="qbox">${qTextHTML(q.question,[])}</div>${answerHTML(q)}
+      <div class="row" style="margin-top:14px;justify-content:space-between">${starBtn(q.id,true)}
+        <button class="btn sm" id="livecm">コメントを書く</button></div></div>`;
+    $("#livecm").onclick=()=>{ S.mode="comment"; openQuestion(q.id); };
+    if(changed && navigator.vibrate) try{ navigator.vibrate(30); }catch(e){}
+  }
+  const rel=S.questions.filter(x=>x.releasedAt && (!q || x.id!==q.id)).sort((a,b)=>b.releasedAt-a.releasedAt).slice(0,30);
+  rc.innerHTML = rel.length ? rel.map(x=>`<li class="qitem" data-id="${x.id}">${starBtn(x.id)}<div class="qno">${esc(x.no??"")}</div><div class="qtx">${esc(x.question)}</div></li>`).join("")
+    : '<div class="empty">まだありません</div>';
+  rc.querySelectorAll(".qitem").forEach(li=>li.onclick=()=>{ S.mode="comment"; openQuestion(li.dataset.id); });
+  bindStars(document.querySelector("#app"));
+}
+function renderGuestComments(){
+  const box=$("#glive"); if(!box) return;
+  const keep=document.querySelector("[data-edtx]")?.value;
+  const cms=S.comments.filter(c=>c.qid===S.qid);
+  box.innerHTML = cms.length ? cms.map(c=>{
+    const mine=c.authorKey===S.me.key, editing=mine&&S.editingId===c.id;
+    return `<div class="cm ${c.done?"done":""}">
+      <div class="ehead"><span class="nm">${esc(c.name)}</span><span class="muted">${esc(c.region)}</span>
+        ${c.done?'<span class="bd done">対応済</span>':""}
+        <span class="tm">投稿 ${fmt(c.createdAt)}${c.updatedAt&&c.updatedAt!==c.createdAt?`／編集 ${fmt(c.updatedAt)}`:""}</span></div>
+      ${editing?`<textarea data-edtx="${c.id}">${esc(keep??c.text)}</textarea>
+        <div class="row" style="margin-top:8px;justify-content:flex-end"><button class="btn sm" data-cancel>キャンセル</button><button class="btn sm pri" data-upd="${c.id}">保存</button></div>`
+      :`<div class="tx">${esc(c.text)}</div>${mine?`<div class="row" style="margin-top:6px;justify-content:flex-end"><button class="btn sm" data-edit="${c.id}">編集</button></div>`:""}`}
+    </div>`;}).join("")
+    : '<div class="empty">まだコメントはありません</div>';
+  box.querySelectorAll("[data-edit]").forEach(b=>b.onclick=()=>{ S.editingId=b.dataset.edit; const k=null; document.querySelector("[data-edtx]")?.remove(); renderGuestCommentsFresh(); });
+  box.querySelectorAll("[data-cancel]").forEach(b=>b.onclick=()=>{ S.editingId=null; renderGuestCommentsFresh(); });
+  box.querySelectorAll("[data-upd]").forEach(b=>b.onclick=()=>{
+    const id=b.dataset.upd, t=document.querySelector(`[data-edtx="${id}"]`).value.trim();
+    if(!t){ toast("コメントを入力してください"); return; }
+    col("comments").doc(id).update({text:t,updatedAt:Date.now()}).then(()=>toast("✓ 更新しました","ok")).catch(()=>toast("更新に失敗しました","ng"));
+    S.editingId=null; renderGuestCommentsFresh();
+  });
+}
+function renderGuestCommentsFresh(){ const e=document.querySelector("[data-edtx]"); if(e) e.removeAttribute("data-edtx"); renderGuestComments(); }
+
+/* ------------------------- owner: questions ------------------------- */
+function renderOwnerQuestions(){
+  $("#app").innerHTML=`<div class="card"><div class="row" style="justify-content:space-between"><h2 style="margin:0">問題管理</h2>
+    <button class="btn pri" id="addq">＋ 問題を追加</button></div>
+    <p class="muted">登録済み：<span id="qcount">${S.questions.length}</span>問</p>
+    <div id="oqlist"></div></div>
+  <div class="card"><h3 style="margin-top:0">まとめて登録（Excel・スプレッドシートから貼り付け）</h3>
+    <p class="muted">1行1問。列はタブ区切りで「問題文 → 解答 → 別解 → 備考」の順（別解・備考は省略可）。Excelで範囲をコピーしてそのまま貼り付けられます。</p>
+    <label class="chk" style="margin:6px 0"><input type="checkbox" id="bnum">1列目は問題番号</label>
+    <textarea id="bulk" style="min-height:140px" placeholder="日本一高い山は何でしょう？	富士山	富士	"></textarea>
+    <div class="row" style="margin-top:8px"><button class="btn pri" id="bulkgo">追加登録</button><span class="muted" id="bulkmsg"></span></div>
+  </div>
+  <div class="card"><h3 style="margin-top:0">一括削除</h3><p class="muted">全問題と、それに付いたリハーサル入力・コメントをすべて削除します。</p>
+    <button class="btn danger" id="delall">全データを削除</button></div>`;
+  $("#addq").onclick=()=>{ S.editQ=null; S.view="oqedit"; render(); };
+  $("#bulkgo").onclick=bulkImport;
+  $("#delall").onclick=async()=>{
+    if(!confirm("全問題・全入力・全コメントを削除します。元に戻せません。よろしいですか？")) return;
+    if(!confirm("本当に削除しますか？")) return;
+    const refs=[...S.questions.map(q=>col("questions").doc(q.id)),...S.rehearsals.map(r=>col("rehearsals").doc(r.id)),...S.comments.map(c=>col("comments").doc(c.id)),...S.bookmarks.map(x=>col("bookmarks").doc(x.id)),col("config").doc("live")];
+    await batchDelete(refs); toast("削除しました");
+  };
+  renderOwnerQList();
+}
+function renderOwnerQList(){
+  const box=$("#oqlist"); if(!box) return;
+  $("#qcount").textContent=S.questions.length;
+  if(!S.loaded.q){ box.innerHTML='<div class="loading">読み込み中…</div>'; return; }
+  if(!S.questions.length){ box.innerHTML='<div class="empty">まだ問題がありません。「＋ 問題を追加」か下の「まとめて登録」から追加してください。</div>'; return; }
+  box.innerHTML=`<table class="otable"><thead><tr><th>No.</th><th>問題文／解答</th><th></th></tr></thead><tbody>`+
+    S.questions.map(q=>`<tr><td class="no">${esc(q.no??"")}</td><td><div class="clip">${esc(q.question)}</div><div class="muted">→ ${esc(q.answer)}${q.alt?`（別解：${esc(q.alt)}）`:""}</div></td>
+      <td class="ac"><button class="btn sm" data-e="${q.id}">編集</button> <button class="btn sm danger" data-d="${q.id}">削除</button></td></tr>`).join("")+`</tbody></table>`;
+  box.querySelectorAll("[data-e]").forEach(b=>b.onclick=()=>{ S.editQ=b.dataset.e; S.view="oqedit"; render(); });
+  box.querySelectorAll("[data-d]").forEach(b=>b.onclick=async()=>{
+    const q=qById(b.dataset.d); if(!confirm(`No.${q.no} を削除しますか？（この問題の入力・コメントも削除されます）`)) return;
+    await batchDelete([col("questions").doc(q.id),...S.rehearsals.filter(r=>r.qid===q.id).map(r=>col("rehearsals").doc(r.id)),...S.comments.filter(c=>c.qid===q.id).map(c=>col("comments").doc(c.id))]);
+    toast("削除しました");
+  });
+}
+async function batchDelete(refs){
+  for(let i=0;i<refs.length;i+=400){ const b=db.batch(); refs.slice(i,i+400).forEach(r=>b.delete(r)); await b.commit(); }
+}
+const nextNo=()=>S.questions.reduce((m,q)=>Math.max(m,Number(q.no)||0),0)+1;
+function renderOwnerEdit(){
+  const q=S.editQ?qById(S.editQ):null;
+  $("#app").innerHTML=`<div class="card"><h2>${q?"問題を編集":"問題を追加"}</h2>
+    <label class="f">問題番号</label><input type="number" id="eno" value="${q?esc(q.no):nextNo()}" style="max-width:140px">
+    <label class="f">問題文</label><textarea id="eq" style="min-height:120px">${esc(q?.question||"")}</textarea>
+    <label class="f">解答</label><input type="text" id="ea" value="${esc(q?.answer||"")}">
+    <label class="f">別解</label><input type="text" id="ealt" value="${esc(q?.alt||"")}">
+    <label class="f">備考（出典・補足など）</label><textarea id="enote" style="min-height:70px">${esc(q?.note||"")}</textarea>
+    ${q&&S.rehearsals.some(r=>r.qid===q.id&&(r.slashes||[]).length)?'<p class="err" style="font-size:13px">※ 問題文を変更すると、既に入力されたスラッシュの位置がずれる場合があります。</p>':""}
+    <div class="row" style="margin-top:14px"><button class="btn" id="ecancel">戻る</button><button class="btn pri" id="esave" style="flex:1">保存</button>
+    ${q?"":'<button class="btn" id="esave2">保存して続けて追加</button>'}</div><div class="err" id="eerr"></div></div>`;
+  $("#ecancel").onclick=()=>{ S.view="oq"; render(); };
+  const save=async cont=>{
+    const data={no:Number($("#eno").value)||nextNo(),question:$("#eq").value.trim(),answer:$("#ea").value.trim(),alt:$("#ealt").value.trim(),note:$("#enote").value.trim(),updatedAt:Date.now()};
+    if(!data.question){ $("#eerr").textContent="問題文を入力してください"; return; }
+    try{ if(q) await col("questions").doc(q.id).update(data); else await col("questions").add({...data,createdAt:Date.now()}); }
+    catch(e){ $("#eerr").textContent="保存に失敗しました: "+e.message; return; }
+    toast("✓ 保存しました","ok");
+    if(cont){ S.editQ=null; renderOwnerEdit(); $("#eq").focus(); } else { S.view="oq"; render(); }
+  };
+  $("#esave").onclick=()=>save(false); if($("#esave2")) $("#esave2").onclick=()=>save(true);
+}
+async function bulkImport(){
+  const raw=$("#bulk").value, withNo=$("#bnum").checked, msg=$("#bulkmsg");
+  const rows=parseTSV(raw).filter(r=>r.some(c=>c.trim()));
+  if(!rows.length){ msg.textContent="貼り付けた内容がありません"; return; }
+  let no=nextNo(); const base=Date.now(); const items=[];
+  rows.forEach((r,i)=>{
+    let c=r.map(x=>x.trim()); let n=no;
+    if(withNo){ n=Number(c[0])||no; c=c.slice(1); }
+    if(!c[0]) return;
+    items.push({no:n,question:c[0],answer:c[1]||"",alt:c[2]||"",note:c[3]||"",createdAt:base+i,updatedAt:base});
+    no=Math.max(no,n)+1;
+  });
+  try{
+    for(let i=0;i<items.length;i+=400){ const b=db.batch(); items.slice(i,i+400).forEach(it=>b.set(col("questions").doc(),it)); await b.commit(); }
+    $("#bulk").value=""; msg.textContent=""; toast(`✓ ${items.length}問を登録しました`,"ok");
+  }catch(e){ msg.textContent="登録に失敗しました: "+e.message; }
+}
+function parseTSV(t){ // Excelのセル内改行（"…"）にも対応
+  const rows=[]; let row=[], cell="", q=false;
+  for(let i=0;i<t.length;i++){ const ch=t[i];
+    if(q){ if(ch==='"'){ if(t[i+1]==='"'){ cell+='"'; i++; } else q=false; } else cell+=ch; continue; }
+    if(ch==='"' && cell===""){ q=true; continue; }
+    if(ch==="\t"){ row.push(cell); cell=""; continue; }
+    if(ch==="\r") continue;
+    if(ch==="\n"){ row.push(cell); rows.push(row); row=[]; cell=""; continue; }
+    cell+=ch; }
+  if(cell!==""||row.length){ row.push(cell); rows.push(row); }
+  return rows;
+}
+
+/* ------------------------- owner: settings ------------------------- */
+function renderOwnerSettings(){
+  const st=S.settings||{};
+  const pwRow=(r)=>`<div class="card"><h3 style="margin-top:0">${ROLE_NAME[r]}パスワード <span class="bd ${st[r+"Hash"]?"done":"warn"}">${st[r+"Hash"]?"設定済み":"未設定"}</span></h3>
+    <div class="row"><input type="password" id="pw_${r}" placeholder="新しいパスワード" style="flex:1;min-width:180px" autocomplete="new-password"><button class="btn pri" data-pw="${r}">設定</button></div>
+    ${r!=="owner"?'<p class="muted">変更すると、ログイン中の'+ROLE_NAME[r]+'は再ログインが必要になります。</p>':""}</div>`;
+  $("#app").innerHTML=`<div class="card"><h3 style="margin-top:0">大会名・タイトル</h3>
+    <div class="row"><input type="text" id="ttl" value="${esc(st.title||"")}" placeholder="クイズ問題チェック" style="flex:1;min-width:180px"><button class="btn pri" id="ttlsave">保存</button></div></div>
+    <div class="card"><h3 style="margin-top:0">ゲストへの問題公開</h3>
+      <p class="muted">通常は、ホストが○・×・スルーを押した問題だけがゲストの一覧に追加されます。現在 <b>${S.questions.filter(q=>q.releasedAt).length}</b> / ${S.questions.length} 問が読まれて公開済みです。</p>
+      <label class="chk" style="margin:6px 0 12px"><input type="checkbox" id="relall" ${st.releaseAll?"checked":""}>全問題をゲストに公開する（読まれていない問題も表示）</label>
+      <div><button class="btn danger sm" id="relreset">公開状態をリセット（全問を未読に戻す）</button></div></div>
+    ${pwRow("host")}${pwRow("guest")}${pwRow("owner")}
+    <div class="card"><h3 style="margin-top:0">参加者の状況</h3><div id="ppl"></div></div>`;
+  $("#relall").onchange=e=>col("config").doc("settings").set({releaseAll:e.target.checked},{merge:true})
+    .then(()=>toast(e.target.checked?"全問題を公開しました":"読まれた問題のみの公開に戻しました","ok"));
+  $("#relreset").onclick=async()=>{
+    if(!confirm("全問題を「未読」に戻します（ゲストの一覧から消えます）。よろしいですか？")) return;
+    const FV=firebase.firestore.FieldValue, list=S.questions.filter(q=>q.releasedAt);
+    for(let i=0;i<list.length;i+=400){ const b=db.batch(); list.slice(i,i+400).forEach(q=>b.update(col("questions").doc(q.id),{releasedAt:FV.delete()})); await b.commit(); }
+    await col("config").doc("live").delete();
+    toast("リセットしました","ok"); render();
+  };
+  $("#ttlsave").onclick=()=>col("config").doc("settings").set({title:$("#ttl").value.trim()},{merge:true}).then(()=>toast("✓ 保存しました","ok"));
+  document.querySelectorAll("[data-pw]").forEach(b=>b.onclick=async()=>{
+    const r=b.dataset.pw, v=$("#pw_"+r).value;
+    if(v.length<4){ toast("4文字以上で入力してください","ng"); return; }
+    const h=pwHash(r,v);
+    await col("config").doc("settings").set({[r+"Hash"]:h},{merge:true});
+    if(r==="owner"){ const sv=ss("qc_session"); sv.h=h; ss("qc_session",sv); }
+    toast(`✓ ${ROLE_NAME[r]}パスワードを設定しました`,"ok"); render();
+  });
+  const ppl={};
+  S.rehearsals.forEach(r=>{ const k="ホスト|"+r.region+"|"+r.name; (ppl[k]=ppl[k]||{n:0,c:0,t:0}).n++; ppl[k].t=Math.max(ppl[k].t,r.updatedAt||0); });
+  S.comments.forEach(c=>{ const k="ゲスト|"+c.region+"|"+c.name; (ppl[k]=ppl[k]||{n:0,c:0,t:0}).c++; ppl[k].t=Math.max(ppl[k].t,c.updatedAt||0); });
+  const ks=Object.keys(ppl);
+  $("#ppl").innerHTML= ks.length ? `<table class="otable"><thead><tr><th>種別</th><th>所属</th><th>名前</th><th>入力</th><th>最終</th></tr></thead><tbody>`+
+    ks.map(k=>{ const [t,rg,nm]=k.split("|"), p=ppl[k]; return `<tr><td>${t}</td><td>${esc(rg)}</td><td>${esc(nm)}</td><td>${t==="ホスト"?p.n+"問":p.c+"件"}</td><td class="muted">${fmt(p.t)}</td></tr>`; }).join("")+"</tbody></table>"
+    : '<div class="empty">まだ入力はありません</div>';
+}
+
+boot();
+</script>
+</body>
+</html>

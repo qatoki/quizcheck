@@ -63,6 +63,19 @@ input:focus,textarea:focus{outline:2px solid var(--pri2);border-color:var(--pri)
 .qbox{background:var(--qbg);color:#fff;border-radius:12px;padding:18px 18px;font-size:22px;line-height:1.9;letter-spacing:.02em;word-break:break-all;user-select:none;-webkit-user-select:none}
 .qbox.sm{font-size:16px;line-height:1.75;padding:12px 14px}
 .qbox.click .ch{cursor:pointer}
+.genre{font-size:12px;color:var(--sub);margin-left:8px;font-weight:400}
+.sl.faint{opacity:.38;text-shadow:none;font-weight:700}
+.ansbox dt.o{color:var(--ok);font-weight:700;font-size:16px} .ansbox dt.t{color:#c27c00;font-weight:700;font-size:16px} .ansbox dt.x{color:var(--ng);font-weight:700;font-size:16px}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+.chips span{font-size:12px;color:var(--sub);background:#f1f3f6;border-radius:6px;padding:2px 8px}
+.helpbtn{width:36px;height:36px;border-radius:50%;border:1px solid var(--line);background:#fff;font-weight:800;font-size:17px;color:var(--pri);cursor:pointer;flex:0 0 auto}
+.modal{position:fixed;inset:0;z-index:60;background:rgba(20,25,40,.45);display:flex;align-items:flex-start;justify-content:center;padding:16px;overflow-y:auto}
+.modal .card{max-width:640px;width:100%;margin:20px 0 40px;position:relative}
+.modal h2{padding-right:40px}
+.modal h3{color:var(--pri)}
+.modal ul{margin:6px 0;padding-left:1.3em;line-height:1.75;font-size:14px}
+.modal .x{position:absolute;top:10px;right:10px}
+.egrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:0 12px}
 .sl{color:var(--slash);font-weight:900;margin:0 1px;text-shadow:0 0 6px rgba(255,212,0,.5)}
 .hint{font-size:12px;color:var(--sub);margin:6px 2px 0}
 .ansbox{margin-top:12px;display:grid;grid-template-columns:auto 1fr;gap:6px 12px;font-size:16px;line-height:1.6}
@@ -135,6 +148,7 @@ code.blk{display:block;white-space:pre-wrap;background:#f1f3f6;border-radius:8px
   <div class="hbar">
     <div class="htitle" id="htitle">クイズ問題チェック</div>
     <div class="who" id="who"></div>
+    <button class="helpbtn" id="help" style="display:none" aria-label="操作マニュアル">？</button>
     <button class="btn sm" id="logout" style="display:none">ログアウト</button>
   </div>
   <nav class="tabs" id="tabs"></nav>
@@ -175,6 +189,13 @@ const COLL_PREFIX = "qc_";   // Firestore のコレクション名の接頭辞�
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const RES = { o:{mark:"○",label:"正解",cls:"o"}, x:{mark:"×",label:"誤答",cls:"x"}, t:{mark:"スルー",label:"スルー",cls:"t"} };
+/* 問題データの列（Excelの列順もこの順） */
+const FIELDS = [
+  ["no","No"],["genre1","大ジャンル"],["genre2","小ジャンル"],["qtype","問題形式"],["atype","解答形式"],
+  ["jiji","時事"],["chars","字数"],["question","問題文"],["answer","答え"],["spell","スペルなど"],
+  ["altO","○"],["altT","△"],["altX","×"]
+];
+const FIELD_ALIAS = {"no.":"no","番号":"no","問題番号":"no","問題":"question","解答":"answer","正解":"answer","スペル":"spell","〇":"altO","○（別解）":"altO","x":"altX","✕":"altX","×（不可）":"altX"};
 const ROLE_NAME = { owner:"オーナー", host:"ホスト", guest:"ゲスト" };
 function fmt(ms){ if(!ms) return ""; const d=new Date(ms); const p=n=>String(n).padStart(2,"0");
   return `${d.getMonth()+1}/${d.getDate()} ${p(d.getHours())}:${p(d.getMinutes())}`; }
@@ -259,10 +280,10 @@ async function boot(){
 function subscribeAll(){
   unsubs.forEach(u=>u()); unsubs=[];
   unsubs.push(col("questions").onSnapshot(s=>{
-    S.questions=s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(a.no??0)-(b.no??0)||(a.createdAt??0)-(b.createdAt??0));
+    S.questions=s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(Number(a.no)||0)-(Number(b.no)||0)||(a.createdAt??0)-(b.createdAt??0));
     S.loaded.q=true; live();
   }, e=>toast("問題の読込エラー","ng")));
-  if(S.me.role!=="guest") unsubs.push(col("rehearsals").onSnapshot(s=>{
+  unsubs.push(col("rehearsals").onSnapshot(s=>{
     S.rehearsals=s.docs.map(d=>({id:d.id,...d.data()})); S.loaded.r=true; live();
   }, e=>toast("結果の読込エラー","ng")));
   unsubs.push(col("comments").onSnapshot(s=>{
@@ -319,8 +340,8 @@ $("#logout").onclick=()=>{ if(S.view==="rehearsal") saveDraft(); logout(); };
 /* ------------------------- header / tabs ------------------------- */
 function renderHeader(){
   const who=$("#who"), lo=$("#logout"), tabs=$("#tabs");
-  if(!S.me){ who.innerHTML=""; lo.style.display="none"; tabs.innerHTML=""; return; }
-  lo.style.display="";
+  if(!S.me){ who.innerHTML=""; lo.style.display="none"; $("#help").style.display="none"; tabs.innerHTML=""; return; }
+  lo.style.display=""; $("#help").style.display="";
   who.innerHTML = S.me.role==="owner" ? "<b>オーナー</b>" :
     `<b>${ROLE_NAME[S.me.role]}</b><br>${esc(S.me.region)}／${esc(S.me.name)}`;
   let t=[];
@@ -361,7 +382,8 @@ function live(liveChanged){
   else if(S.view==="gdetail"){
     const q=qById(S.qid);
     if(!q||!isReleased(q)){ S.view="list"; render(); return; }
-    renderGuestComments(); const st=$("#gstar"); if(st){ st.innerHTML=starBtn(q.id,true); bindStars(st); }
+    renderGuestComments(); const gb=$("#gqbox"); if(gb) gb.innerHTML=qTextHTML(q.question,hostSlashes(q.id),true);
+    const st=$("#gstar"); if(st){ st.innerHTML=starBtn(q.id,true); bindStars(st); }
   }
   else if(S.view==="oq") renderOwnerQList();
   else if(S.view==="rehearsal" && !qById(S.qid)) { S.view="list"; render(); }
@@ -452,7 +474,7 @@ function filteredQuestions(){
   const k=S.search.trim().toLowerCase();
   return navList().filter(q=>{
     if(S.mode==="comment" && S.onlyBm && !S.myBm.has(q.id)) return false;
-    if(k &&!((q.question||"")+(q.answer||"")+(q.alt||"")+(q.no??"")).toLowerCase().includes(k)) return false;
+    if(k &&!(FIELDS.map(([k])=>q[k]??"").join(" ")+(q.alt||"")).toLowerCase().includes(k)) return false;
     if(S.mode==="results" && S.onlyOpen && !S.comments.some(c=>c.qid===q.id&&!c.done)) return false;
     return true;
   });
@@ -495,11 +517,15 @@ function openQuestion(id){
 }
 
 /* ------------------------- question text with slashes ------------------------- */
-function qTextHTML(text, slashes){
+function qTextHTML(text, slashes, faint){
   const set = slashes instanceof Set ? slashes : new Set(slashes||[]);
   const chars=Array.from(text||"");
-  return chars.map((c,i)=> (c==="\n"?'<br>':`<span class="ch" data-i="${i}">${esc(c)}</span>`) + (set.has(i)?'<span class="sl">/</span>':"")).join("");
+  const sl = faint ? '<span class="sl faint">/</span>' : '<span class="sl">/</span>';
+  return chars.map((c,i)=> (c==="\n"?'<br>':`<span class="ch" data-i="${i}">${esc(c)}</span>`) + (set.has(i)?sl:"")).join("");
 }
+// ホストが入れたスラッシュ（全ホスト分を重ねたもの）…ゲスト画面に薄く表示
+function hostSlashes(qid){ const s=new Set(); S.rehearsals.forEach(r=>{ if(r.qid===qid) (r.slashes||[]).forEach(i=>s.add(i)); }); return s; }
+const genreHTML = q => (q.genre1||q.genre2) ? `<span class="genre">${esc(q.genre1||"")}${q.genre1&&q.genre2?"／":""}${esc(q.genre2||"")}</span>` : "";
 function bindSlashBox(box, getText, set, onChange){
   box.onclick=e=>{
     const ch=e.target.closest(".ch"); if(!ch) return;
@@ -512,11 +538,13 @@ function bindSlashBox(box, getText, set, onChange){
   };
 }
 function answerHTML(q){
+  const row=(dt,v,cls)=> v ? `<dt class="${cls||""}">${dt}</dt><dd>${esc(v)}</dd>` : "";
+  const chips=[["問題形式",q.qtype],["解答形式",q.atype],["時事",q.jiji],["字数",q.chars]].filter(([,v])=>v!==undefined&&v!==null&&String(v)!=="");
   return `<dl class="ansbox">
-    <dt>解答</dt><dd class="ans">${esc(q.answer)||'<span class="muted">（未登録）</span>'}</dd>
-    ${q.alt?`<dt>別解</dt><dd>${esc(q.alt)}</dd>`:""}
-    ${q.note?`<dt>備考</dt><dd>${esc(q.note)}</dd>`:""}
-  </dl>`;
+    <dt>答え</dt><dd class="ans">${esc(q.answer)||'<span class="muted">（未登録）</span>'}</dd>
+    ${row("スペル等",q.spell)}${row("○",q.altO,"o")}${row("△",q.altT,"t")}${row("×",q.altX,"x")}
+    ${row("別解",q.alt)}${row("備考",q.note)}
+  </dl>${chips.length?`<div class="chips">${chips.map(([k,v])=>`<span>${k}：${esc(v)}</span>`).join("")}</div>`:""}`;
 }
 function navBar(){
   const i=qIndex(S.qid), n=navList().length;
@@ -533,7 +561,7 @@ function navBar(){
   };
   $("#nprev").onclick=()=>go(-1); $("#nnext").onclick=()=>go(1); $("#nlist").onclick=()=>go(0);
 }
-function qHeader(q){ const i=qIndex(q.id); return `<div class="qmeta"><b>No.${esc(q.no??"")}</b><span class="muted">${i+1} / ${navList().length}</span></div>`; }
+function qHeader(q){ const i=qIndex(q.id); return `<div class="qmeta"><div><b>No.${esc(q.no??"")}</b>${genreHTML(q)}</div><span class="muted">${i+1} / ${navList().length}</span></div>`; }
 
 /* ------------------------- host: rehearsal ------------------------- */
 function myRehearsal(qid){ return S.rehearsals.find(r=>r.qid===qid&&r.userKey===S.me.key); }
@@ -635,7 +663,7 @@ function leaveCheck(){
 function renderGuestDetail(){
   const q=qById(S.qid); if(!q||!isReleased(q)){ S.view="list"; render(); return; }
   $("#app").innerHTML=`<div class="card">${qHeader(q)}
-    <div class="qbox sm">${qTextHTML(q.question,[])}</div>${answerHTML(q)}
+    <div class="qbox sm" id="gqbox">${qTextHTML(q.question,hostSlashes(q.id),true)}</div>${answerHTML(q)}
     <div class="row" id="gstar" style="margin-top:12px">${starBtn(q.id,true)}</div></div>
     <div class="card"><h3 style="margin-top:0">コメント</h3><div id="glive"></div>
       <h3>新しいコメント</h3>
@@ -667,8 +695,8 @@ function renderLiveBody(changed){
   if(!S.loaded.q){ box.innerHTML='<div class="loading">読み込み中…</div>'; }
   else if(!q || !isReleased(q)){ box.innerHTML='<div class="card"><div class="empty">まだ問題は読まれていません。チェック会が始まるとここに表示されます。</div></div>'; }
   else {
-    box.innerHTML=`<div class="card ${changed?"livecard":""}"><div class="qmeta"><b>No.${esc(q.no??"")}</b><span class="muted">${fmt(S.live.at)}</span></div>
-      <div class="qbox">${qTextHTML(q.question,[])}</div>${answerHTML(q)}
+    box.innerHTML=`<div class="card ${changed?"livecard":""}"><div class="qmeta"><div><b>No.${esc(q.no??"")}</b>${genreHTML(q)}</div><span class="muted">${fmt(S.live.at)}</span></div>
+      <div class="qbox">${qTextHTML(q.question,hostSlashes(q.id),true)}</div>${answerHTML(q)}
       <div class="row" style="margin-top:14px;justify-content:space-between">${starBtn(q.id,true)}
         <button class="btn sm" id="livecm">コメントを書く</button></div></div>`;
     $("#livecm").onclick=()=>{ S.mode="comment"; openQuestion(q.id); };
@@ -713,9 +741,10 @@ function renderOwnerQuestions(){
     <p class="muted">登録済み：<span id="qcount">${S.questions.length}</span>問</p>
     <div id="oqlist"></div></div>
   <div class="card"><h3 style="margin-top:0">まとめて登録（Excel・スプレッドシートから貼り付け）</h3>
-    <p class="muted">1行1問。列はタブ区切りで「問題文 → 解答 → 別解 → 備考」の順（別解・備考は省略可）。Excelで範囲をコピーしてそのまま貼り付けられます。</p>
-    <label class="chk" style="margin:6px 0"><input type="checkbox" id="bnum">1列目は問題番号</label>
-    <textarea id="bulk" style="min-height:140px" placeholder="日本一高い山は何でしょう？	富士山	富士	"></textarea>
+    <p class="muted">Excelで範囲をコピーしてそのまま貼り付けてください（1行1問）。<br>
+    <b>見出し行ごと貼り付けると、列名で自動判別</b>します。見出し無しの場合は次の列順で読み込みます：<br>
+    ${FIELDS.map(f=>f[1]).join(" → ")}</p>
+    <textarea id="bulk" style="min-height:140px" placeholder="${FIELDS.map(f=>f[1]).join("\t")}"></textarea>
     <div class="row" style="margin-top:8px"><button class="btn pri" id="bulkgo">追加登録</button><span class="muted" id="bulkmsg"></span></div>
   </div>
   <div class="card"><h3 style="margin-top:0">一括削除</h3><p class="muted">全問題と、それに付いたリハーサル入力・コメントをすべて削除します。</p>
@@ -735,8 +764,8 @@ function renderOwnerQList(){
   $("#qcount").textContent=S.questions.length;
   if(!S.loaded.q){ box.innerHTML='<div class="loading">読み込み中…</div>'; return; }
   if(!S.questions.length){ box.innerHTML='<div class="empty">まだ問題がありません。「＋ 問題を追加」か下の「まとめて登録」から追加してください。</div>'; return; }
-  box.innerHTML=`<table class="otable"><thead><tr><th>No.</th><th>問題文／解答</th><th></th></tr></thead><tbody>`+
-    S.questions.map(q=>`<tr><td class="no">${esc(q.no??"")}</td><td><div class="clip">${esc(q.question)}</div><div class="muted">→ ${esc(q.answer)}${q.alt?`（別解：${esc(q.alt)}）`:""}</div></td>
+  box.innerHTML=`<table class="otable"><thead><tr><th>No.</th><th>問題文／答え</th><th></th></tr></thead><tbody>`+
+    S.questions.map(q=>`<tr><td class="no">${esc(q.no??"")}</td><td>${genreHTML(q).replace('class="genre"','class="genre" style="margin:0"')}<div class="clip">${esc(q.question)}</div><div class="muted">→ ${esc(q.answer)}${q.altO?`（○ ${esc(q.altO)}）`:""}</div></td>
       <td class="ac"><button class="btn sm" data-e="${q.id}">編集</button> <button class="btn sm danger" data-d="${q.id}">削除</button></td></tr>`).join("")+`</tbody></table>`;
   box.querySelectorAll("[data-e]").forEach(b=>b.onclick=()=>{ S.editQ=b.dataset.e; S.view="oqedit"; render(); });
   box.querySelectorAll("[data-d]").forEach(b=>b.onclick=async()=>{
@@ -751,37 +780,50 @@ async function batchDelete(refs){
 const nextNo=()=>S.questions.reduce((m,q)=>Math.max(m,Number(q.no)||0),0)+1;
 function renderOwnerEdit(){
   const q=S.editQ?qById(S.editQ):null;
+  const inp=(k,lab,extra)=>`<div><label class="f">${lab}</label><input type="text" id="e_${k}" value="${esc(q?.[k]??(k==="no"?nextNo():""))}" ${extra||""}></div>`;
   $("#app").innerHTML=`<div class="card"><h2>${q?"問題を編集":"問題を追加"}</h2>
-    <label class="f">問題番号</label><input type="number" id="eno" value="${q?esc(q.no):nextNo()}" style="max-width:140px">
-    <label class="f">問題文</label><textarea id="eq" style="min-height:120px">${esc(q?.question||"")}</textarea>
-    <label class="f">解答</label><input type="text" id="ea" value="${esc(q?.answer||"")}">
-    <label class="f">別解</label><input type="text" id="ealt" value="${esc(q?.alt||"")}">
-    <label class="f">備考（出典・補足など）</label><textarea id="enote" style="min-height:70px">${esc(q?.note||"")}</textarea>
+    <div class="egrid">${inp("no","No")}${inp("genre1","大ジャンル")}${inp("genre2","小ジャンル")}${inp("qtype","問題形式")}${inp("atype","解答形式")}${inp("jiji","時事")}${inp("chars","字数","placeholder=\"空欄なら自動\"")}</div>
+    <label class="f">問題文</label><textarea id="e_question" style="min-height:120px">${esc(q?.question||"")}</textarea>
+    <label class="f">答え</label><input type="text" id="e_answer" value="${esc(q?.answer||"")}">
+    <div class="egrid">${inp("spell","スペルなど")}${inp("altO","○（正解とする）")}${inp("altT","△")}${inp("altX","×（不正解とする）")}</div>
+    ${q&&(q.alt||q.note)?`<p class="muted">旧データ：別解「${esc(q.alt||"")}」 備考「${esc(q.note||"")}」</p>`:""}
     ${q&&S.rehearsals.some(r=>r.qid===q.id&&(r.slashes||[]).length)?'<p class="err" style="font-size:13px">※ 問題文を変更すると、既に入力されたスラッシュの位置がずれる場合があります。</p>':""}
     <div class="row" style="margin-top:14px"><button class="btn" id="ecancel">戻る</button><button class="btn pri" id="esave" style="flex:1">保存</button>
     ${q?"":'<button class="btn" id="esave2">保存して続けて追加</button>'}</div><div class="err" id="eerr"></div></div>`;
   $("#ecancel").onclick=()=>{ S.view="oq"; render(); };
   const save=async cont=>{
-    const data={no:Number($("#eno").value)||nextNo(),question:$("#eq").value.trim(),answer:$("#ea").value.trim(),alt:$("#ealt").value.trim(),note:$("#enote").value.trim(),updatedAt:Date.now()};
+    const data={}; FIELDS.forEach(([k])=>data[k]=$("#e_"+k).value.trim());
+    const n=Number(data.no); data.no = data.no==="" ? nextNo() : (isFinite(n)?n:data.no);
+    if(!data.chars) data.chars=String(Array.from(data.question.replace(/\s/g,"")).length);
+    data.updatedAt=Date.now();
     if(!data.question){ $("#eerr").textContent="問題文を入力してください"; return; }
     try{ if(q) await col("questions").doc(q.id).update(data); else await col("questions").add({...data,createdAt:Date.now()}); }
     catch(e){ $("#eerr").textContent="保存に失敗しました: "+e.message; return; }
     toast("✓ 保存しました","ok");
-    if(cont){ S.editQ=null; renderOwnerEdit(); $("#eq").focus(); } else { S.view="oq"; render(); }
+    if(cont){ S.editQ=null; renderOwnerEdit(); $("#e_question").focus(); } else { S.view="oq"; render(); }
   };
   $("#esave").onclick=()=>save(false); if($("#esave2")) $("#esave2").onclick=()=>save(true);
 }
 async function bulkImport(){
-  const raw=$("#bulk").value, withNo=$("#bnum").checked, msg=$("#bulkmsg");
-  const rows=parseTSV(raw).filter(r=>r.some(c=>c.trim()));
+  const raw=$("#bulk").value, msg=$("#bulkmsg");
+  let rows=parseTSV(raw).filter(r=>r.some(c=>c.trim()));
   if(!rows.length){ msg.textContent="貼り付けた内容がありません"; return; }
+  // 見出し行の判定：列名が3つ以上一致すれば見出しとして扱う
+  const norm=x=>x.trim().replace(/\s/g,"");
+  const keyOf=h=>{ const n=norm(h); const f=FIELDS.find(([,lab])=>lab===n); return f?f[0]:(FIELD_ALIAS[n.toLowerCase()]||FIELD_ALIAS[n]||null); };
+  let map=FIELDS.map(f=>f[0]);
+  const hk=rows[0].map(keyOf);
+  if(hk.filter(Boolean).length>=3){ map=hk; rows=rows.slice(1); }
+  if(!map.includes("question")){ msg.textContent="「問題文」の列が見つかりません"; return; }
   let no=nextNo(); const base=Date.now(); const items=[];
   rows.forEach((r,i)=>{
-    let c=r.map(x=>x.trim()); let n=no;
-    if(withNo){ n=Number(c[0])||no; c=c.slice(1); }
-    if(!c[0]) return;
-    items.push({no:n,question:c[0],answer:c[1]||"",alt:c[2]||"",note:c[3]||"",createdAt:base+i,updatedAt:base});
-    no=Math.max(no,n)+1;
+    const it={}; r.forEach((v,ci)=>{ const k=map[ci]; if(k) it[k]=v.trim(); });
+    if(!it.question) return;
+    FIELDS.forEach(([k])=>{ if(it[k]===undefined) it[k]=""; });
+    const n=Number(it.no); it.no = it.no==="" ? no : (isFinite(n)&&it.no!=="" ? n : it.no);
+    if(!it.chars) it.chars=String(Array.from(it.question.replace(/\s/g,"")).length);
+    items.push({...it,createdAt:base+i,updatedAt:base});
+    no=Math.max(no,Number(it.no)||0)+1;
   });
   try{
     for(let i=0;i<items.length;i+=400){ const b=db.batch(); items.slice(i,i+400).forEach(it=>b.set(col("questions").doc(),it)); await b.commit(); }
@@ -841,6 +883,59 @@ function renderOwnerSettings(){
     ks.map(k=>{ const [t,rg,nm]=k.split("|"), p=ppl[k]; return `<tr><td>${t}</td><td>${esc(rg)}</td><td>${esc(nm)}</td><td>${t==="ホスト"?p.n+"問":p.c+"件"}</td><td class="muted">${fmt(p.t)}</td></tr>`; }).join("")+"</tbody></table>"
     : '<div class="empty">まだ入力はありません</div>';
 }
+
+/* ------------------------- help (操作マニュアル) ------------------------- */
+const HELP = {
+  host: { title:"ホスト用 操作マニュアル", sec:[
+    ["ログイン", ["「ホスト」を選び、所属（地域名）・名前・ホストパスワードを入力します。",
+      "同じ所属・名前で入れば、別の端末からでも自分の入力内容を引き継げます。"]],
+    ["リハーサル：問題を開く", ["「リハーサル」タブの一覧から問題を選びます。検索欄で問題文・答え・ジャンルなどを絞り込めます。",
+      "一覧の○×や「/ 数字」は、自分が入力済みの内容です。"]],
+    ["スラッシュ（/）を入れる", ["問題文の文字をタップします。文字の左半分を押すとその前に、右半分を押すとその後ろに黄色い「/」が入ります。",
+      "もう一度同じ場所を押すと消えます。「スラッシュ全消去」でその問題の「/」をすべて消せます。"]],
+    ["○・×・スルーを選ぶ", ["問題が読まれ、判定が決まったらボタンを押します。もう一度押すと選択を解除できます。",
+      "ボタンを押した時点で、その問題がゲストの「チェック会（今の問題）」に表示され、ゲストの問題一覧にも追加されます（解除しても公開は取り消されません）。"]],
+    ["送信", ["画面下の「前の問題」「次の問題」「一覧に戻る」を押すと、入力内容が自動で送信されます。",
+      "送信が完了すると、右上に「✓ 送信しました」と一瞬表示されます。変更がない場合は送信されません。"]],
+    ["結果閲覧", ["「結果閲覧」タブで問題を選ぶと、全ホストの○×・スラッシュ位置・入力者・時刻が見られます。",
+      "ゲストのコメントと、★ブックマークを付けたゲストも表示されます。",
+      "コメントへの対応が終わったら「対応済み」にチェックを入れます（全員に共有されます）。",
+      "一覧の「未対応コメントありのみ」で、対応が残っている問題だけに絞り込めます。"]],
+  ]},
+  guest: { title:"ゲスト用 操作マニュアル", sec:[
+    ["ログイン", ["「ゲスト」を選び、所属（地域名）・名前・ゲストパスワードを入力します。",
+      "ブックマークとコメントは「所属＋名前」で管理されます。毎回同じ所属・名前で入ってください。"]],
+    ["チェック会（今の問題）", ["チェック会中はこのタブを開いておきます。ホストが判定した問題（＝いま読まれた問題）が自動で表示されます。",
+      "問題文中の薄い黄色の「/」は、ホストが付けた区切りの位置です。",
+      "画面下には、これまでに読まれた問題が新しい順に並びます。"]],
+    ["ブックマーク", ["気になった問題は「☆ブックマーク」を押して★にしておきます。もう一度押すと外れます。",
+      "後でコメントを書くときの目印になります。"]],
+    ["問題一覧・コメント", ["読まれた問題だけが順次追加されます（まだ読まれていない問題は表示されません）。",
+      "「★ブックマークのみ」にチェックを入れると、ブックマークした問題だけに絞り込めます。",
+      "問題を開き、下の欄にコメントを入力して「保存」を押すと送信されます。",
+      "自分のコメントは「編集」から直して「保存」を押すと更新されます。投稿者と投稿・編集時刻が記録されます。",
+      "ホストが対応を終えたコメントには「対応済」と表示されます。"]],
+  ]},
+  owner: { title:"オーナー用 操作マニュアル", sec:[
+    ["問題管理", ["Excelで見出し行ごと範囲をコピーし、「まとめて登録」に貼り付けると列名で自動判別して登録します。",
+      "列：No／大ジャンル／小ジャンル／問題形式／解答形式／時事／字数／問題文／答え／スペルなど／○／△／×",
+      "1問ずつの追加・編集・削除もできます。字数が空欄なら自動で数えます。"]],
+    ["結果閲覧", ["ホストと同じ画面で、全員の入力・コメント・ブックマークを確認できます。コメントの削除もできます。"]],
+    ["設定・パスワード", ["大会名、ホスト・ゲスト・オーナーの各パスワードを設定します。",
+      "「全問題をゲストに公開」で、読まれていない問題もゲストに表示できます（チェック会後のコメント用）。",
+      "「公開状態をリセット」で全問題を未読に戻せます（リハーサル後、本番前など）。"]],
+  ]}
+};
+function openHelp(){
+  const h=HELP[S.me?.role]; if(!h) return;
+  const m=document.createElement("div"); m.className="modal";
+  m.innerHTML=`<div class="card"><button class="btn sm x">閉じる</button><h2>${h.title}</h2>
+    ${h.sec.map(([t,items])=>`<h3>${t}</h3><ul>${items.map(i=>`<li>${esc(i)}</li>`).join("")}</ul>`).join("")}
+    <p class="muted" style="margin-top:16px">うまく動かないときは、ページを再読み込みしてください。ログイン状態は保たれます。</p></div>`;
+  m.onclick=e=>{ if(e.target===m||e.target.classList.contains("x")) m.remove(); };
+  document.body.appendChild(m);
+}
+$("#help").onclick=openHelp;
 
 boot();
 </script>

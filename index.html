@@ -61,13 +61,18 @@ input:focus,textarea:focus{outline:2px solid var(--pri2);border-color:var(--pri)
 .qmeta{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px}
 .qmeta b{font-size:18px;color:var(--pri)}
 .qbox{background:var(--qbg);color:#fff;border-radius:12px;padding:18px 18px;font-size:22px;line-height:1.9;letter-spacing:.02em;word-break:break-all;user-select:none;-webkit-user-select:none}
-.qbox.sm{font-size:16px;line-height:1.75;padding:12px 14px}
+.qbox.sm{font-size:16px;line-height:2.05;padding:12px 14px}
 .qbox.click .ch{cursor:pointer}
 .genre{font-size:12px;color:var(--sub);margin-left:8px;font-weight:400}
 .sl.faint{opacity:.38;text-shadow:none;font-weight:700}
 .ansbox dt.o{color:var(--ok);font-weight:700;font-size:16px} .ansbox dt.t{color:#c27c00;font-weight:700;font-size:16px} .ansbox dt.x{color:var(--ng);font-weight:700;font-size:16px}
 .chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
 .chips span{font-size:12px;color:var(--sub);background:#f1f3f6;border-radius:6px;padding:2px 8px}
+.rubybtn{height:36px;border-radius:18px;border:1px solid var(--line);background:#fff;font-size:12px;font-weight:700;color:var(--sub);cursor:pointer;padding:0 9px;flex:0 0 auto;white-space:nowrap}
+.rubybtn.on{background:var(--pri2);border-color:#b8c8f0;color:var(--pri)}
+rt{font-size:.5em;font-weight:400;color:#8a909c;letter-spacing:0}
+.qbox rt{color:rgba(255,255,255,.6)}
+.ansbox dd.ans rt{font-weight:400}
 .helpbtn{width:36px;height:36px;border-radius:50%;border:1px solid var(--line);background:#fff;font-weight:800;font-size:17px;color:var(--pri);cursor:pointer;flex:0 0 auto}
 .modal{position:fixed;inset:0;z-index:60;background:rgba(20,25,40,.45);display:flex;align-items:flex-start;justify-content:center;padding:16px;overflow-y:auto}
 .modal .card{max-width:640px;width:100%;margin:20px 0 40px;position:relative}
@@ -148,6 +153,7 @@ code.blk{display:block;white-space:pre-wrap;background:#f1f3f6;border-radius:8px
   <div class="hbar">
     <div class="htitle" id="htitle">クイズ問題チェック</div>
     <div class="who" id="who"></div>
+    <button class="rubybtn" id="rubybtn" style="display:none" aria-pressed="true">ふりがな</button>
     <button class="helpbtn" id="help" style="display:none" aria-label="操作マニュアル">？</button>
     <button class="btn sm" id="logout" style="display:none">ログアウト</button>
   </div>
@@ -183,7 +189,7 @@ const FIREBASE_CONFIG = {
   appId: "...."
 };
 */
-const COLL_PREFIX = "qc_";   // Firestore のコレクション名の接頭辞（他アプリと同じプロジェクトでも衝突しないように）
+const ROOT_COLL = "qc2";   // Firestore のコレクション名（データはパスワードから作る「合言葉の場所」に保存されます）
 
 /* ------------------------- utilities ------------------------- */
 const $ = s => document.querySelector(s);
@@ -228,12 +234,16 @@ function sha256hex(str){
   }
   return H.map(v=>v.toString(16).padStart(8,"0")).join("");
 }
-const pwHash = (role,pw) => sha256hex("quizcheck-v1|"+role+"|"+pw);
+// パスワードから、そのユーザー種別の入口（ログイン文書）の場所を作る。パスワードを知らないと場所が分からない
+const loginIdFor = (role,pw) => ({owner:"o_",host:"h_",guest:"g_"})[role] + sha256hex("qc2|"+role+"|"+pw);
+const randId = p => p + Array.from(crypto.getRandomValues(new Uint8Array(20)),b=>b.toString(16).padStart(2,"0")).join("");
 const userKey = (region,name) => sha256hex("u|"+region.trim()+"|"+name.trim()).slice(0,20);
 
 /* ------------------------- state ------------------------- */
 const S = {
-  settings:null, questions:[], rehearsals:[], comments:[],
+  meta:{}, ownerDoc:null, initialized:null, ready:false,
+  questions:[], rehearsals:[], comments:[],
+  ruby: ls("qc_ruby")!==false,   // ふりがな表示（端末ごと）
   live:null,          // {qid, at} 今読まれている問題
   bookmarks:[],       // 全ゲストのブックマーク（ホスト・オーナー用）
   myBm:new Set(),     // 自分のブックマーク（ゲスト用）
@@ -247,7 +257,10 @@ const S = {
   editingId:null, editQ:null
 };
 let db=null, unsubs=[];
-const col = n => db.collection(COLL_PREFIX+n);
+const SP = { data:null, gdata:null };              // 問題データの場所／ゲスト用データの場所
+const ROOT = () => db.collection(ROOT_COLL);
+const Dc = n => ROOT().doc(SP.data).collection(n);   // オーナー・ホスト用（全問題・リハーサル）
+const Gc = n => ROOT().doc(SP.gdata).collection(n);  // ゲストと共有（公開済み問題・コメント・ブックマーク・今の問題）
 
 /* ------------------------- firebase ------------------------- */
 function getConfig(){ return FIREBASE_CONFIG || ls("qc_fbconfig"); }
@@ -258,61 +271,83 @@ async function boot(){
     firebase.initializeApp(cfg);
     db=firebase.firestore();
     try{ await db.enablePersistence({synchronizeTabs:true}); }catch(e){}
-    try{ await firebase.auth().signInAnonymously(); }catch(e){ console.warn("匿名認証が無効です（ルール次第で書き込めない場合があります）", e); }
+    try{ await firebase.auth().signInAnonymously(); }catch(e){ console.warn("匿名認証が無効です", e); }
   }catch(e){ renderSetup(false, "Firebaseの初期化に失敗しました: "+e.message); return; }
-  const timer=setTimeout(()=>{ if(!S.settings) $("#app").innerHTML='<div class="card"><b>データに接続できません。</b><p class="muted">通信環境・Firebase設定・Firestoreのルールを確認してください。</p></div>'; },10000);
-  col("config").doc("settings").onSnapshot(s=>{
-    clearTimeout(timer);
-    S.settings=s.data()||{};
-    $("#htitle").textContent=S.settings.title||"クイズ問題チェック";
-    document.title=S.settings.title||"クイズ問題チェック";
-    if(!S.me){
-      const sv=ss("qc_session");
-      if(sv && sv.h && S.settings[sv.role+"Hash"]===sv.h){ startSession(sv); return; }
-      if(S.view==="select"||S.view==="login") render();
-    } else {
-      // パスワード変更されたらログアウト（オーナー以外）
-      const sv=ss("qc_session");
-      if(sv && S.me.role!=="owner" && S.settings[sv.role+"Hash"]!==sv.h){ logout("パスワードが変更されました。再ログインしてください"); }
-    }
-  }, e=>{ clearTimeout(timer); $("#app").innerHTML='<div class="card"><b>読み込みエラー</b><p class="muted">'+esc(e.message)+'</p><p class="muted">Firestoreのセキュリティルールを確認してください。</p></div>'; });
+  const timer=setTimeout(()=>{ if(!S.ready) $("#app").innerHTML='<div class="card"><b>データに接続できません。</b><p class="muted">通信環境・Firebase設定・Firestoreのルール・匿名ログインの設定を確認してください。</p></div>'; },10000);
+  try{
+    const init=await ROOT().doc("_init").get();
+    S.initialized=init.exists;
+  }catch(e){ clearTimeout(timer); $("#app").innerHTML='<div class="card"><b>読み込みエラー</b><p class="muted">'+esc(e.message)+'</p><p class="muted">Firestoreのセキュリティルールと匿名ログインの設定を確認してください。</p></div>'; return; }
+  clearTimeout(timer); S.ready=true;
+  const sv=ss("qc_session");
+  if(sv && sv.login){
+    try{ const d=await ROOT().doc(sv.login).get(); if(d.exists){ startSession(sv,d.data()); return; } }catch(e){}
+    ss("qc_session",null);
+  }
+  render();
 }
+const sortQ = a => a.sort((a,b)=>(Number(a.no)||0)-(Number(b.no)||0)||(a.createdAt??0)-(b.createdAt??0));
+function setTitle(){ const t=S.meta.title||"クイズ問題チェック"; $("#htitle").textContent=t; document.title=t; }
 function subscribeAll(){
   unsubs.forEach(u=>u()); unsubs=[];
-  unsubs.push(col("questions").onSnapshot(s=>{
-    S.questions=s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(Number(a.no)||0)-(Number(b.no)||0)||(a.createdAt??0)-(b.createdAt??0));
-    S.loaded.q=true; live();
-  }, e=>toast("問題の読込エラー","ng")));
-  unsubs.push(col("rehearsals").onSnapshot(s=>{
-    S.rehearsals=s.docs.map(d=>({id:d.id,...d.data()})); S.loaded.r=true; live();
-  }, e=>toast("結果の読込エラー","ng")));
-  unsubs.push(col("comments").onSnapshot(s=>{
+  S.questions=[]; S.rehearsals=[]; S.comments=[]; S.bookmarks=[]; S.live=null; S.myBm=new Set();
+  S.loaded={q:false,r:false,c:false};
+  const role=S.me.role, err=m=>e=>toast(m+"の読込エラー","ng");
+  // 自分の入口（ログイン文書）が消えた＝パスワードが変更された
+  unsubs.push(ROOT().doc(S.me.login).onSnapshot(s=>{
+    if(!s.exists){ if(!s.metadata.fromCache) logout("パスワードが変更されました。再ログインしてください"); return; }
+    if(role==="owner"){ S.ownerDoc=s.data(); if(S.view==="oset") renderOwnerSettings(); }
+  },()=>{}));
+  unsubs.push(ROOT().doc(role==="guest"?SP.gdata:SP.data).onSnapshot(s=>{ S.meta=s.data()||{}; setTitle(); live(); },()=>{}));
+  if(role==="guest"){
+    unsubs.push(Gc("pub").onSnapshot(s=>{ S.questions=sortQ(s.docs.map(d=>({id:d.id,...d.data()}))); S.loaded.q=true; live(); }, err("問題")));
+  } else {
+    unsubs.push(Dc("questions").onSnapshot(s=>{ S.questions=sortQ(s.docs.map(d=>({id:d.id,...d.data()}))); S.loaded.q=true; live(); }, err("問題")));
+    unsubs.push(Dc("rehearsals").onSnapshot(s=>{ S.rehearsals=s.docs.map(d=>({id:d.id,...d.data()})); S.loaded.r=true; live(); }, err("結果")));
+  }
+  unsubs.push(Gc("comments").onSnapshot(s=>{
     S.comments=s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(a.createdAt??0)-(b.createdAt??0));
     S.loaded.c=true; live();
-  }, e=>toast("コメントの読込エラー","ng")));
-  unsubs.push(col("config").doc("live").onSnapshot(s=>{
+  }, err("コメント")));
+  unsubs.push(Gc("state").doc("live").onSnapshot(s=>{
     const prev=S.live?.qid; S.live=s.data()||null;
     live(prev!==S.live?.qid);
-  }, e=>{}));
-  if(S.me.role==="guest") unsubs.push(col("bookmarks").doc(S.me.key).onSnapshot(s=>{
+  }, ()=>{}));
+  if(role==="guest") unsubs.push(Gc("bookmarks").doc(S.me.key).onSnapshot(s=>{
     S.myBm=new Set((s.data()||{}).qids||[]); live();
-  }, e=>{}));
-  else unsubs.push(col("bookmarks").onSnapshot(s=>{
+  }, ()=>{}));
+  else unsubs.push(Gc("bookmarks").onSnapshot(s=>{
     S.bookmarks=s.docs.map(d=>({id:d.id,...d.data()})); live();
-  }, e=>{}));
+  }, ()=>{}));
 }
-/* 公開（＝ホストが○×スルーを押して読まれた）判定 */
-const isReleased = q => !!(S.settings?.releaseAll || q.releasedAt);
-const navList = () => S.me && S.me.role==="guest" ? S.questions.filter(isReleased) : S.questions;
+/* 公開（＝ホストが○×スルーを押して読まれた）判定。ゲストには公開済みの問題しか届かない */
+const isReleased = q => S.me && S.me.role==="guest" ? true : !!(S.meta.releaseAll || q.releasedAt);
+const navList = () => S.questions;
+// 全ホストのスラッシュを重ねたもの（over: 自分の入力中の内容で置き換える）
+function unionSlashes(qid, over){
+  const s=new Set();
+  S.rehearsals.forEach(r=>{ if(r.qid!==qid || (over && r.userKey===over.key)) return; (r.slashes||[]).forEach(i=>s.add(i)); });
+  if(over) over.slashes.forEach(i=>s.add(i));
+  return [...s].sort((a,b)=>a-b);
+}
+// ゲスト用に複製する問題データ
+function pubData(q, extra){
+  const o={}; FIELDS.forEach(([k])=>o[k]=q[k]??"");
+  o.alt=q.alt||""; o.note=q.note||""; o.createdAt=q.createdAt||0; o.releasedAt=q.releasedAt||null;
+  o.slashes=unionSlashes(q.id);
+  return Object.assign(o, extra||{});
+}
 function releaseQuestion(q){
   const now=Date.now();
-  if(!q.releasedAt) col("questions").doc(q.id).update({releasedAt:now}).catch(()=>{});
-  col("config").doc("live").set({qid:q.id,at:now}).catch(()=>{});
+  if(!q.releasedAt) Dc("questions").doc(q.id).update({releasedAt:now}).catch(()=>{});
+  const sl = S.draft && S.draft.qid===q.id ? unionSlashes(q.id,{key:S.me.key,slashes:[...S.draft.slashes]}) : unionSlashes(q.id);
+  Gc("pub").doc(q.id).set(pubData(q,{releasedAt:q.releasedAt||now,slashes:sl}),{merge:true}).catch(()=>toast("公開に失敗しました","ng"));
+  Gc("state").doc("live").set({qid:q.id,at:now}).catch(()=>{});
 }
 function toggleBookmark(qid){
   const FV=firebase.firestore.FieldValue, has=S.myBm.has(qid);
   has?S.myBm.delete(qid):S.myBm.add(qid);
-  col("bookmarks").doc(S.me.key).set({name:S.me.name,region:S.me.region,updatedAt:Date.now(),
+  Gc("bookmarks").doc(S.me.key).set({name:S.me.name,region:S.me.region,updatedAt:Date.now(),
     qids: has?FV.arrayRemove(qid):FV.arrayUnion(qid)},{merge:true})
     .then(()=>toast(has?"ブックマークを外しました":"★ ブックマークしました","ok")).catch(()=>toast("保存に失敗しました","ng"));
   live();
@@ -323,25 +358,38 @@ const starBtn = (qid, big) => { const on=S.myBm.has(qid);
 function bindStars(root){ (root||document).querySelectorAll("[data-star]").forEach(b=>b.onclick=e=>{ e.stopPropagation(); toggleBookmark(b.dataset.star); }); }
 
 /* ------------------------- session ------------------------- */
-function startSession(sv){
-  S.me={role:sv.role,name:sv.name||"",region:sv.region||"",key:sv.role==="owner"?"owner":userKey(sv.region,sv.name)};
-  ss("qc_session",sv);
+function startSession(sv, ld){
+  S.me={role:sv.role,name:sv.name||"",region:sv.region||"",key:sv.role==="owner"?"owner":userKey(sv.region,sv.name),login:sv.login};
+  SP.data=ld.data||null; SP.gdata=ld.gdata||null;
+  if(sv.role==="owner") S.ownerDoc=ld;
+  ss("qc_session",{role:sv.role,name:sv.name,region:sv.region,login:sv.login});
   S.mode = sv.role==="host"?"rehearsal": sv.role==="guest"?"live":"oq";
   S.view = sv.role==="owner"?"oq": sv.role==="guest"?"live":"list";
   subscribeAll(); render();
 }
 function logout(msg){
   unsubs.forEach(u=>u()); unsubs=[]; ss("qc_session",null);
-  S.me=null; S.view="select"; S.mode=null; S.qid=null; S.draft=null;
-  render(); if(msg) toast(msg);
+  S.me=null; S.view="select"; S.mode=null; S.qid=null; S.draft=null; S.meta={}; SP.data=SP.gdata=null;
+  setTitle(); render(); if(msg) toast(msg);
 }
 $("#logout").onclick=()=>{ if(S.view==="rehearsal") saveDraft(); logout(); };
+// ふりがな表示の切り替え（入力途中のコメントは保ったまま描き直す）
+$("#rubybtn").onclick=()=>{
+  S.ruby=!S.ruby; ls("qc_ruby",S.ruby);
+  const nc=$("#newc")?.value, ed=document.querySelector("[data-edtx]")?.value;
+  render();
+  if(nc&&$("#newc")) $("#newc").value=nc;
+  const e2=document.querySelector("[data-edtx]"); if(ed!=null&&e2) e2.value=ed;
+  toast(S.ruby?"ふりがなを表示します":"ふりがなを隠します（カッコ書きのまま表示）");
+};
 
 /* ------------------------- header / tabs ------------------------- */
 function renderHeader(){
   const who=$("#who"), lo=$("#logout"), tabs=$("#tabs");
-  if(!S.me){ who.innerHTML=""; lo.style.display="none"; $("#help").style.display="none"; tabs.innerHTML=""; return; }
-  lo.style.display=""; $("#help").style.display="";
+  const rb=$("#rubybtn");
+  if(!S.me){ who.innerHTML=""; lo.style.display="none"; $("#help").style.display="none"; rb.style.display="none"; tabs.innerHTML=""; return; }
+  lo.style.display=""; $("#help").style.display=""; rb.style.display="";
+  rb.classList.toggle("on",S.ruby); rb.setAttribute("aria-pressed",String(S.ruby)); rb.textContent=S.ruby?"ふりがな":"ふりがな✕"; rb.title=S.ruby?"ふりがなを表示中（押すとカッコ書きに戻す）":"カッコ書きで表示中（押すとふりがな表示）";
   who.innerHTML = S.me.role==="owner" ? "<b>オーナー</b>" :
     `<b>${ROLE_NAME[S.me.role]}</b><br>${esc(S.me.region)}／${esc(S.me.name)}`;
   let t=[];
@@ -420,20 +468,18 @@ function renderSelect(){
   document.querySelectorAll(".role").forEach(b=>b.onclick=()=>{ S.loginRole=b.dataset.r; S.view="login"; render(); });
 }
 function renderLogin(){
-  const r=S.loginRole, st=S.settings||{}, first = r==="owner" && !st.ownerHash;
-  const notSet = r!=="owner" && !st[r+"Hash"];
+  const r=S.loginRole, first = r==="owner" && S.initialized===false;
   const prev=ls("qc_profile_"+r)||{};
   $("#app").innerHTML=`<div class="card" style="max-width:480px;margin:0 auto">
   <h2>${ROLE_NAME[r]}としてログイン</h2>
-  ${first?'<p class="muted">初回設定です。オーナーパスワードを決めて入力してください。</p>':""}
-  ${notSet?'<p class="err">'+ROLE_NAME[r]+'パスワードがまだ設定されていません。オーナーに設定を依頼してください。</p>':""}
+  ${first?'<p class="muted">初回設定です。オーナーパスワードを決めて入力してください（8文字以上がおすすめ）。</p>':""}
   <form id="lf">
   ${r!=="owner"?`<label class="f">所属（地域名）</label><input type="text" id="lregion" value="${esc(prev.region||"")}" autocomplete="organization">
   <label class="f">名前</label><input type="text" id="lname" value="${esc(prev.name||"")}" autocomplete="name">`:""}
   <label class="f">${ROLE_NAME[r]}パスワード</label><input type="password" id="lpw" autocomplete="current-password">
   ${first?'<label class="f">パスワード（確認）</label><input type="password" id="lpw2">':""}
   <div class="err" id="lerr"></div>
-  <div class="row" style="margin-top:14px"><button type="button" class="btn" id="lback">戻る</button><button class="btn pri" style="flex:1">${first?"設定してログイン":"ログイン"}</button></div>
+  <div class="row" style="margin-top:14px"><button type="button" class="btn" id="lback">戻る</button><button class="btn pri" style="flex:1" id="lgo">${first?"設定してログイン":"ログイン"}</button></div>
   </form></div>`;
   $("#lback").onclick=()=>{ S.view="select"; render(); };
   $("#lf").onsubmit=async ev=>{
@@ -443,14 +489,22 @@ function renderLogin(){
     if(r!=="owner"){ region=$("#lregion").value.trim(); name=$("#lname").value.trim();
       if(!region||!name){ err.textContent="所属（地域名）と名前を入力してください"; return; } }
     if(!pw){ err.textContent="パスワードを入力してください"; return; }
-    const h=pwHash(r,pw);
-    if(first){
-      if(pw!==$("#lpw2").value){ err.textContent="確認用パスワードが一致しません"; return; }
-      try{ await col("config").doc("settings").set({ownerHash:h},{merge:true}); }
-      catch(e){ err.textContent="保存できませんでした: "+e.message; return; }
-    } else if(st[r+"Hash"]!==h){ err.textContent="パスワードが違います"; return; }
-    if(r!=="owner") ls("qc_profile_"+r,{region,name});
-    startSession({role:r,name,region,h});
+    const id=loginIdFor(r,pw); $("#lgo").disabled=true; err.textContent="";
+    try{
+      if(first){
+        if(pw!==$("#lpw2").value){ err.textContent="確認用パスワードが一致しません"; $("#lgo").disabled=false; return; }
+        const now=Date.now(), D=randId("d_"), G=randId("x_");
+        const ld={data:D,gdata:G,hostId:null,guestId:null,createdAt:now};
+        const b=db.batch();
+        b.set(ROOT().doc(id),ld); b.set(ROOT().doc(D),{title:"",releaseAll:false}); b.set(ROOT().doc(G),{title:""}); b.set(ROOT().doc("_init"),{at:now});
+        await b.commit(); S.initialized=true;
+        startSession({role:r,login:id},ld); return;
+      }
+      const d=await ROOT().doc(id).get();
+      if(!d.exists){ err.textContent="パスワードが違います（まだ設定されていない場合は、オーナーに確認してください）"; $("#lgo").disabled=false; return; }
+      if(r!=="owner") ls("qc_profile_"+r,{region,name});
+      startSession({role:r,name,region,login:id},d.data());
+    }catch(e){ err.textContent="接続できませんでした: "+e.message; $("#lgo").disabled=false; }
   };
 }
 
@@ -504,7 +558,7 @@ function renderListBody(){
       if(cms.some(c=>c.authorKey===S.me.key)) b+=`<span class="bd o">投稿済</span>`;
     }
     const st = S.mode==="comment" ? starBtn(q.id) : "";
-    return `<li class="qitem" data-id="${q.id}">${st}<div class="qno">${esc(q.no??"")}</div><div class="qtx">${esc(q.question)}</div><div class="qbadges">${b}</div></li>`;
+    return `<li class="qitem" data-id="${q.id}">${st}<div class="qno">${esc(q.no??"")}</div><div class="qtx">${listText(q.question)}</div><div class="qbadges">${b}</div></li>`;
   }).join("");
   ul.querySelectorAll(".qitem").forEach(li=>li.onclick=()=>openQuestion(li.dataset.id));
   bindStars(ul);
@@ -516,15 +570,102 @@ function openQuestion(id){
   render(); window.scrollTo(0,0);
 }
 
-/* ------------------------- question text with slashes ------------------------- */
+/* ------------------------- ふりがな（カッコ書き → ルビ） -------------------------
+   例：草薙剣（くさなぎのつるぎ）／伊藤・博文（いとう・ひろぶみ）／Tom（トム）
+   元の文字列は変えず、表示のときだけカッコを隠して上にふりがなを載せる（スラッシュの位置はずれない） */
+const KANA_ONLY = /^[\p{Script=Hiragana}\p{Script=Katakana}ー・･゠\s]+$/u;
+const NAME_SEP = /[・･\s]/;
+const PARTICLES = 'のがをにはとでもへやか';
+const isKanji = ch => /[\p{Script=Han}々〆ヶヵ]/u.test(ch || '');
+const isHira = ch => /\p{Script=Hiragana}/u.test(ch || '');
+const isLatinCh = ch => /[A-Za-zÀ-ɏ0-9Ａ-Ｚａ-ｚ０-９'’\-\.&]/.test(ch || '');
+const toHira = t => String(t).replace(/[ァ-ヶ]/g, c => String.fromCharCode(c.charCodeAt(0) - 0x60));
+function rubyRanges(text){   // 文字列の位置（UTF-16）で返す
+  text=String(text??""); const re=/[（(]([^（）()]{1,40})[）)]/g; const out=[]; let last=0, m;
+  while((m=re.exec(text))){
+    const reading=m[1].trim(), p=m.index;
+    if(!reading || !KANA_ONLY.test(reading)) continue;
+    let b=p, rd=reading;
+    if(isKanji(text[b-1])){
+      const parts=reading.split(/[・･\s]+/).filter(Boolean);
+      if(parts.length>=2){
+        const segs=[]; let q=p, ok=true;
+        for(let k=parts.length-1;k>=0;k--){
+          const e2=q; while(q>0 && isKanji(text[q-1])) q--;
+          if(q===e2){ ok=false; break; }
+          segs.unshift([q,e2]);
+          if(k>0){ if(NAME_SEP.test(text[q-1]||"")) q--; else { ok=false; break; } }
+        }
+        if(ok && q>=last){ out.push({segs:segs.map(([a,e2],k)=>({s:a,e:e2,r:parts[k]})), ps:p, pe:p+m[0].length}); last=p+m[0].length; continue; }
+        if(!/\p{Script=Katakana}/u.test(reading.replace(/ー/g,""))) rd=parts.join("");
+      }
+      while(b>0 && isKanji(text[b-1])) b--;
+      for(;;){   // 送りがなをはさむ語（掛け軸 など）は前の漢字までのばす
+        let k=b, n=0;
+        while(k>0 && isHira(text[k-1]) && n<2){ k--; n++; }
+        if(n===0 || k===0 || !isKanji(text[k-1])) break;
+        const kana=text.slice(k,b);
+        if(n===1 && PARTICLES.includes(kana) && toHira(reading).replace(/\s/g,"").length <= 3.5*[...text.slice(b,p)].filter(isKanji).length) break;
+        if(!toHira(reading).includes(kana)) break;
+        while(k>0 && isKanji(text[k-1])) k--;
+        b=k;
+      }
+    } else if(isLatinCh(text[b-1])){
+      while(b>0 && (isLatinCh(text[b-1]) || (text[b-1]===" " && isLatinCh(text[b-2])))) b--;
+    } else continue;
+    if(b<last) continue;
+    out.push({segs:[{s:b,e:p,r:rd}], ps:p, pe:p+m[0].length}); last=p+m[0].length;
+  }
+  return out;
+}
+const rubyCache=new Map();
+function rubyMap(text){   // 1文字（コードポイント）単位の位置に直す
+  text=String(text??"");
+  if(rubyCache.has(text)) return rubyCache.get(text);
+  const cp=[]; let n=0; for(let i=0;i<text.length;){ const c=text.codePointAt(i), w=c>0xffff?2:1; for(let j=0;j<w;j++) cp[i+j]=n; i+=w; n++; } cp[text.length]=n;
+  const start=new Map(), hide=new Set();
+  rubyRanges(text).forEach(x=>{
+    x.segs.forEach(g=>start.set(cp[g.s],{e:cp[g.e],r:g.r}));
+    for(let i=cp[x.ps];i<cp[x.pe];i++) hide.add(i);
+  });
+  const res={start,hide}; if(rubyCache.size>2000) rubyCache.clear(); rubyCache.set(text,res); return res;
+}
+/* 問題文（スラッシュ付き）。i 番目の文字の後ろにスラッシュ */
 function qTextHTML(text, slashes, faint){
   const set = slashes instanceof Set ? slashes : new Set(slashes||[]);
   const chars=Array.from(text||"");
   const sl = faint ? '<span class="sl faint">/</span>' : '<span class="sl">/</span>';
-  return chars.map((c,i)=> (c==="\n"?'<br>':`<span class="ch" data-i="${i}">${esc(c)}</span>`) + (set.has(i)?sl:"")).join("");
+  const R = S.ruby ? rubyMap(text) : null;
+  let h="", openEnd=-1, openR="";
+  chars.forEach((c,i)=>{
+    if(R && R.start.has(i)){ const x=R.start.get(i); openEnd=x.e; openR=x.r; h+="<ruby>"; }
+    if(!(R && R.hide.has(i))) h += c==="\n" ? "<br>" : `<span class="ch" data-i="${i}">${esc(c)}</span>`;
+    if(openEnd>=0 && i===openEnd-1){ h+=`<rt>${esc(openR)}</rt></ruby>`; openEnd=-1; }
+    if(set.has(i)) h+=sl;
+  });
+  if(openEnd>=0) h+=`<rt>${esc(openR)}</rt></ruby>`;
+  return h;
+}
+/* 一覧用：ふりがなONならカッコ書きの読みを省いた短い文にする */
+function listText(text){
+  text=String(text??""); if(!S.ruby) return esc(text);
+  const R=rubyMap(text); return esc(Array.from(text).filter((c,i)=>!R.hide.has(i)).join(""));
+}
+/* スラッシュなしの文（答えなど）にふりがなを付ける */
+function rubyText(text){
+  text=String(text??""); if(!S.ruby) return esc(text);
+  const chars=Array.from(text), R=rubyMap(text);
+  let h="", openEnd=-1, openR="";
+  chars.forEach((c,i)=>{
+    if(R.start.has(i)){ const x=R.start.get(i); openEnd=x.e; openR=x.r; h+="<ruby>"; }
+    if(!R.hide.has(i)) h+=esc(c);
+    if(openEnd>=0 && i===openEnd-1){ h+=`<rt>${esc(openR)}</rt></ruby>`; openEnd=-1; }
+  });
+  if(openEnd>=0) h+=`<rt>${esc(openR)}</rt></ruby>`;
+  return h;
 }
 // ホストが入れたスラッシュ（全ホスト分を重ねたもの）…ゲスト画面に薄く表示
-function hostSlashes(qid){ const s=new Set(); S.rehearsals.forEach(r=>{ if(r.qid===qid) (r.slashes||[]).forEach(i=>s.add(i)); }); return s; }
+function hostSlashes(qid){ return S.me && S.me.role==="guest" ? new Set(qById(qid)?.slashes||[]) : new Set(unionSlashes(qid)); }
 const genreHTML = q => (q.genre1||q.genre2) ? `<span class="genre">${esc(q.genre1||"")}${q.genre1&&q.genre2?"／":""}${esc(q.genre2||"")}</span>` : "";
 function bindSlashBox(box, getText, set, onChange){
   box.onclick=e=>{
@@ -538,10 +679,10 @@ function bindSlashBox(box, getText, set, onChange){
   };
 }
 function answerHTML(q){
-  const row=(dt,v,cls)=> v ? `<dt class="${cls||""}">${dt}</dt><dd>${esc(v)}</dd>` : "";
+  const row=(dt,v,cls)=> v ? `<dt class="${cls||""}">${dt}</dt><dd>${rubyText(v)}</dd>` : "";
   const chips=[["問題形式",q.qtype],["解答形式",q.atype],["時事",q.jiji],["字数",q.chars]].filter(([,v])=>v!==undefined&&v!==null&&String(v)!=="");
   return `<dl class="ansbox">
-    <dt>答え</dt><dd class="ans">${esc(q.answer)||'<span class="muted">（未登録）</span>'}</dd>
+    <dt>答え</dt><dd class="ans">${q.answer?rubyText(q.answer):'<span class="muted">（未登録）</span>'}</dd>
     ${row("スペル等",q.spell)}${row("○",q.altO,"o")}${row("△",q.altT,"t")}${row("×",q.altX,"x")}
     ${row("別解",q.alt)}${row("備考",q.note)}
   </dl>${chips.length?`<div class="chips">${chips.map(([k,v])=>`<span>${k}：${esc(v)}</span>`).join("")}</div>`:""}`;
@@ -579,7 +720,8 @@ function saveDraft(){
   S.draft=null;
   if(same) return;
   const docId=d.qid+"__"+S.me.key;
-  col("rehearsals").doc(docId).set({
+  if(isReleased(q)) Gc("pub").doc(q.id).set({slashes:unionSlashes(q.id,{key:S.me.key,slashes:sl})},{merge:true}).catch(()=>{});
+  Dc("rehearsals").doc(docId).set({
     qid:d.qid, qno:q.no??null, userKey:S.me.key, name:S.me.name, region:S.me.region,
     result:d.result, slashes:sl, updatedAt:Date.now()
   }).then(()=>toast("✓ 送信しました","ok")).catch(e=>toast("送信に失敗しました","ng"));
@@ -644,12 +786,12 @@ function renderDetailLive(){
     : '<div class="empty">コメントはありません</div>');
   cl.querySelectorAll("[data-done]").forEach(cb=>cb.onchange=()=>{
     const v=cb.checked, who=S.me.role==="owner"?"オーナー":S.me.name;
-    col("comments").doc(cb.dataset.done).update(v?{done:true,doneBy:who,doneAt:Date.now()}:{done:false,doneBy:"",doneAt:null})
+    Gc("comments").doc(cb.dataset.done).update(v?{done:true,doneBy:who,doneAt:Date.now()}:{done:false,doneBy:"",doneAt:null})
       .then(()=>toast(v?"✓ 対応済みにしました":"未対応に戻しました","ok")).catch(()=>toast("更新に失敗しました","ng"));
   });
   cl.querySelectorAll("[data-del]").forEach(b=>b.onclick=()=>{
     if(!confirm("このコメントを削除しますか？")) return;
-    col("comments").doc(b.dataset.del).delete().then(()=>toast("削除しました")).catch(()=>toast("削除に失敗しました","ng"));
+    Gc("comments").doc(b.dataset.del).delete().then(()=>toast("削除しました")).catch(()=>toast("削除に失敗しました","ng"));
   });
 }
 
@@ -675,7 +817,7 @@ function renderGuestDetail(){
   $("#savec").onclick=()=>{
     const t=$("#newc").value.trim(); if(!t){ toast("コメントを入力してください"); return; }
     const now=Date.now(), btn=$("#savec"); btn.disabled=true;
-    col("comments").add({qid:q.id,qno:q.no??null,authorKey:S.me.key,name:S.me.name,region:S.me.region,text:t,createdAt:now,updatedAt:now,done:false})
+    Gc("comments").add({qid:q.id,qno:q.no??null,authorKey:S.me.key,name:S.me.name,region:S.me.region,text:t,createdAt:now,updatedAt:now,done:false})
       .then(()=>{ toast("✓ 送信しました","ok"); }).catch(()=>toast("送信に失敗しました","ng")).finally(()=>{ if($("#savec")) $("#savec").disabled=false; });
     $("#newc").value="";
   };
@@ -703,7 +845,7 @@ function renderLiveBody(changed){
     if(changed && navigator.vibrate) try{ navigator.vibrate(30); }catch(e){}
   }
   const rel=S.questions.filter(x=>x.releasedAt && (!q || x.id!==q.id)).sort((a,b)=>b.releasedAt-a.releasedAt).slice(0,30);
-  rc.innerHTML = rel.length ? rel.map(x=>`<li class="qitem" data-id="${x.id}">${starBtn(x.id)}<div class="qno">${esc(x.no??"")}</div><div class="qtx">${esc(x.question)}</div></li>`).join("")
+  rc.innerHTML = rel.length ? rel.map(x=>`<li class="qitem" data-id="${x.id}">${starBtn(x.id)}<div class="qno">${esc(x.no??"")}</div><div class="qtx">${listText(x.question)}</div></li>`).join("")
     : '<div class="empty">まだありません</div>';
   rc.querySelectorAll(".qitem").forEach(li=>li.onclick=()=>{ S.mode="comment"; openQuestion(li.dataset.id); });
   bindStars(document.querySelector("#app"));
@@ -728,7 +870,7 @@ function renderGuestComments(){
   box.querySelectorAll("[data-upd]").forEach(b=>b.onclick=()=>{
     const id=b.dataset.upd, t=document.querySelector(`[data-edtx="${id}"]`).value.trim();
     if(!t){ toast("コメントを入力してください"); return; }
-    col("comments").doc(id).update({text:t,updatedAt:Date.now()}).then(()=>toast("✓ 更新しました","ok")).catch(()=>toast("更新に失敗しました","ng"));
+    Gc("comments").doc(id).update({text:t,updatedAt:Date.now()}).then(()=>toast("✓ 更新しました","ok")).catch(()=>toast("更新に失敗しました","ng"));
     S.editingId=null; renderGuestCommentsFresh();
   });
 }
@@ -754,7 +896,7 @@ function renderOwnerQuestions(){
   $("#delall").onclick=async()=>{
     if(!confirm("全問題・全入力・全コメントを削除します。元に戻せません。よろしいですか？")) return;
     if(!confirm("本当に削除しますか？")) return;
-    const refs=[...S.questions.map(q=>col("questions").doc(q.id)),...S.rehearsals.map(r=>col("rehearsals").doc(r.id)),...S.comments.map(c=>col("comments").doc(c.id)),...S.bookmarks.map(x=>col("bookmarks").doc(x.id)),col("config").doc("live")];
+    const refs=[...S.questions.map(q=>Dc("questions").doc(q.id)),...S.questions.map(q=>Gc("pub").doc(q.id)),...S.rehearsals.map(r=>Dc("rehearsals").doc(r.id)),...S.comments.map(c=>Gc("comments").doc(c.id)),...S.bookmarks.map(x=>Gc("bookmarks").doc(x.id)),Gc("state").doc("live")];
     await batchDelete(refs); toast("削除しました");
   };
   renderOwnerQList();
@@ -770,7 +912,7 @@ function renderOwnerQList(){
   box.querySelectorAll("[data-e]").forEach(b=>b.onclick=()=>{ S.editQ=b.dataset.e; S.view="oqedit"; render(); });
   box.querySelectorAll("[data-d]").forEach(b=>b.onclick=async()=>{
     const q=qById(b.dataset.d); if(!confirm(`No.${q.no} を削除しますか？（この問題の入力・コメントも削除されます）`)) return;
-    await batchDelete([col("questions").doc(q.id),...S.rehearsals.filter(r=>r.qid===q.id).map(r=>col("rehearsals").doc(r.id)),...S.comments.filter(c=>c.qid===q.id).map(c=>col("comments").doc(c.id))]);
+    await batchDelete([Dc("questions").doc(q.id),Gc("pub").doc(q.id),...S.rehearsals.filter(r=>r.qid===q.id).map(r=>Dc("rehearsals").doc(r.id)),...S.comments.filter(c=>c.qid===q.id).map(c=>Gc("comments").doc(c.id))]);
     toast("削除しました");
   });
 }
@@ -797,7 +939,12 @@ function renderOwnerEdit(){
     if(!data.chars) data.chars=String(Array.from(data.question.replace(/\s/g,"")).length);
     data.updatedAt=Date.now();
     if(!data.question){ $("#eerr").textContent="問題文を入力してください"; return; }
-    try{ if(q) await col("questions").doc(q.id).update(data); else await col("questions").add({...data,createdAt:Date.now()}); }
+    try{
+      const ref = q ? Dc("questions").doc(q.id) : Dc("questions").doc();
+      if(q) await ref.update(data); else { data.createdAt=Date.now(); await ref.set(data); }
+      const full={...(q||{}),...data,id:ref.id};
+      if(isReleased(full)) await Gc("pub").doc(ref.id).set(pubData(full),{merge:true});   // 公開済みならゲスト用の複製も更新
+    }
     catch(e){ $("#eerr").textContent="保存に失敗しました: "+e.message; return; }
     toast("✓ 保存しました","ok");
     if(cont){ S.editQ=null; renderOwnerEdit(); $("#e_question").focus(); } else { S.view="oq"; render(); }
@@ -826,7 +973,7 @@ async function bulkImport(){
     no=Math.max(no,Number(it.no)||0)+1;
   });
   try{
-    for(let i=0;i<items.length;i+=400){ const b=db.batch(); items.slice(i,i+400).forEach(it=>b.set(col("questions").doc(),it)); await b.commit(); }
+    for(let i=0;i<items.length;i+=200){ const b=db.batch(); items.slice(i,i+200).forEach(it=>{ const ref=Dc("questions").doc(); b.set(ref,it); if(S.meta.releaseAll) b.set(Gc("pub").doc(ref.id),pubData({...it,id:ref.id})); }); await b.commit(); }
     $("#bulk").value=""; msg.textContent=""; toast(`✓ ${items.length}問を登録しました`,"ok");
   }catch(e){ msg.textContent="登録に失敗しました: "+e.message; }
 }
@@ -845,35 +992,46 @@ function parseTSV(t){ // Excelのセル内改行（"…"）にも対応
 
 /* ------------------------- owner: settings ------------------------- */
 function renderOwnerSettings(){
-  const st=S.settings||{};
-  const pwRow=(r)=>`<div class="card"><h3 style="margin-top:0">${ROLE_NAME[r]}パスワード <span class="bd ${st[r+"Hash"]?"done":"warn"}">${st[r+"Hash"]?"設定済み":"未設定"}</span></h3>
-    <div class="row"><input type="password" id="pw_${r}" placeholder="新しいパスワード" style="flex:1;min-width:180px" autocomplete="new-password"><button class="btn pri" data-pw="${r}">設定</button></div>
-    ${r!=="owner"?'<p class="muted">変更すると、ログイン中の'+ROLE_NAME[r]+'は再ログインが必要になります。</p>':""}</div>`;
+  const st=S.meta||{}, od=S.ownerDoc||{};
+  const isSet=r=> r==="owner" ? true : !!od[r+"Id"];
+  const pwRow=(r)=>`<div class="card"><h3 style="margin-top:0">${ROLE_NAME[r]}パスワード <span class="bd ${isSet(r)?"done":"warn"}">${isSet(r)?"設定済み":"未設定"}</span></h3>
+    <div class="row"><input type="password" id="pw_${r}" placeholder="新しいパスワード（8文字以上推奨）" style="flex:1;min-width:180px" autocomplete="new-password"><button class="btn pri" data-pw="${r}">設定</button></div>
+    ${r!=="owner"?'<p class="muted">変更すると、ログイン中の'+ROLE_NAME[r]+'は自動でログアウトされ、新しいパスワードでの再ログインが必要になります。</p>':'<p class="muted">オーナーのパスワードはどこにも保存されません。忘れると問題データに入れなくなるので注意してください。</p>'}</div>`;
   $("#app").innerHTML=`<div class="card"><h3 style="margin-top:0">大会名・タイトル</h3>
     <div class="row"><input type="text" id="ttl" value="${esc(st.title||"")}" placeholder="クイズ問題チェック" style="flex:1;min-width:180px"><button class="btn pri" id="ttlsave">保存</button></div></div>
     <div class="card"><h3 style="margin-top:0">ゲストへの問題公開</h3>
-      <p class="muted">通常は、ホストが○・×・スルーを押した問題だけがゲストの一覧に追加されます。現在 <b>${S.questions.filter(q=>q.releasedAt).length}</b> / ${S.questions.length} 問が読まれて公開済みです。</p>
+      <p class="muted">通常は、ホストが○・×・スルーを押した問題だけがゲストに届きます（まだ読まれていない問題のデータはゲストの端末に送られません）。現在 <b>${S.questions.filter(q=>q.releasedAt).length}</b> / ${S.questions.length} 問が読まれて公開済みです。</p>
       <label class="chk" style="margin:6px 0 12px"><input type="checkbox" id="relall" ${st.releaseAll?"checked":""}>全問題をゲストに公開する（読まれていない問題も表示）</label>
       <div><button class="btn danger sm" id="relreset">公開状態をリセット（全問を未読に戻す）</button></div></div>
     ${pwRow("host")}${pwRow("guest")}${pwRow("owner")}
     <div class="card"><h3 style="margin-top:0">参加者の状況</h3><div id="ppl"></div></div>`;
-  $("#relall").onchange=e=>col("config").doc("settings").set({releaseAll:e.target.checked},{merge:true})
-    .then(()=>toast(e.target.checked?"全問題を公開しました":"読まれた問題のみの公開に戻しました","ok"));
+  $("#relall").onchange=async e=>{
+    const on=e.target.checked; e.target.disabled=true;
+    try{
+      if(on){ for(let i=0;i<S.questions.length;i+=400){ const b=db.batch(); S.questions.slice(i,i+400).forEach(q=>b.set(Gc("pub").doc(q.id),pubData(q),{merge:true})); await b.commit(); } }
+      else { await batchDelete(S.questions.filter(q=>!q.releasedAt).map(q=>Gc("pub").doc(q.id))); }
+      await ROOT().doc(SP.data).set({releaseAll:on},{merge:true});
+      toast(on?"全問題を公開しました":"読まれた問題のみの公開に戻しました","ok");
+    }catch(err){ toast("切り替えに失敗しました","ng"); }
+    e.target.disabled=false;
+  };
   $("#relreset").onclick=async()=>{
-    if(!confirm("全問題を「未読」に戻します（ゲストの一覧から消えます）。よろしいですか？")) return;
+    if(!confirm("全問題を「未読」に戻します（ゲストの一覧から消えます。「全問題を公開」もオフになります）。よろしいですか？")) return;
     const FV=firebase.firestore.FieldValue, list=S.questions.filter(q=>q.releasedAt);
-    for(let i=0;i<list.length;i+=400){ const b=db.batch(); list.slice(i,i+400).forEach(q=>b.update(col("questions").doc(q.id),{releasedAt:FV.delete()})); await b.commit(); }
-    await col("config").doc("live").delete();
+    for(let i=0;i<list.length;i+=400){ const b=db.batch(); list.slice(i,i+400).forEach(q=>b.update(Dc("questions").doc(q.id),{releasedAt:FV.delete()})); await b.commit(); }
+    await batchDelete([...S.questions.map(q=>Gc("pub").doc(q.id)),Gc("state").doc("live")]);
+    await ROOT().doc(SP.data).set({releaseAll:false},{merge:true});
     toast("リセットしました","ok"); render();
   };
-  $("#ttlsave").onclick=()=>col("config").doc("settings").set({title:$("#ttl").value.trim()},{merge:true}).then(()=>toast("✓ 保存しました","ok"));
+  $("#ttlsave").onclick=async()=>{ const t=$("#ttl").value.trim();
+    await ROOT().doc(SP.data).set({title:t},{merge:true}); await ROOT().doc(SP.gdata).set({title:t},{merge:true}); toast("✓ 保存しました","ok"); };
   document.querySelectorAll("[data-pw]").forEach(b=>b.onclick=async()=>{
     const r=b.dataset.pw, v=$("#pw_"+r).value;
     if(v.length<4){ toast("4文字以上で入力してください","ng"); return; }
-    const h=pwHash(r,v);
-    await col("config").doc("settings").set({[r+"Hash"]:h},{merge:true});
-    if(r==="owner"){ const sv=ss("qc_session"); sv.h=h; ss("qc_session",sv); }
-    toast(`✓ ${ROLE_NAME[r]}パスワードを設定しました`,"ok"); render();
+    b.disabled=true;
+    try{ await setPassword(r,v); toast(`✓ ${ROLE_NAME[r]}パスワードを設定しました`,"ok"); }
+    catch(e){ toast("設定に失敗しました: "+e.message,"ng"); }
+    b.disabled=false; if(S.view==="oset") renderOwnerSettings();
   });
   const ppl={};
   S.rehearsals.forEach(r=>{ const k="ホスト|"+r.region+"|"+r.name; (ppl[k]=ppl[k]||{n:0,c:0,t:0}).n++; ppl[k].t=Math.max(ppl[k].t,r.updatedAt||0); });
@@ -882,6 +1040,23 @@ function renderOwnerSettings(){
   $("#ppl").innerHTML= ks.length ? `<table class="otable"><thead><tr><th>種別</th><th>所属</th><th>名前</th><th>入力</th><th>最終</th></tr></thead><tbody>`+
     ks.map(k=>{ const [t,rg,nm]=k.split("|"), p=ppl[k]; return `<tr><td>${t}</td><td>${esc(rg)}</td><td>${esc(nm)}</td><td>${t==="ホスト"?p.n+"問":p.c+"件"}</td><td class="muted">${fmt(p.t)}</td></tr>`; }).join("")+"</tbody></table>"
     : '<div class="empty">まだ入力はありません</div>';
+}
+
+/* パスワードの設定：新しい入口を作り、古い入口を消す（データ本体は動かさない） */
+async function setPassword(r, pw){
+  const id=loginIdFor(r,pw), od={...(S.ownerDoc||{})};
+  if(r==="owner"){
+    const old=S.me.login; if(id===old) return;
+    await ROOT().doc(id).set(od);
+    S.me.login=id; const sv=ss("qc_session"); sv.login=id; ss("qc_session",sv);
+    subscribeAll();
+    await ROOT().doc(old).delete();
+    return;
+  }
+  const field=r+"Id", old=od[field]; if(id===old) return;
+  await ROOT().doc(id).set(r==="host"?{data:SP.data,gdata:SP.gdata}:{gdata:SP.gdata});
+  await ROOT().doc(S.me.login).set({[field]:id},{merge:true});
+  if(old) await ROOT().doc(old).delete();
 }
 
 /* ------------------------- help (操作マニュアル) ------------------------- */
@@ -901,6 +1076,8 @@ const HELP = {
       "ゲストのコメントと、★ブックマークを付けたゲストも表示されます。",
       "コメントへの対応が終わったら「対応済み」にチェックを入れます（全員に共有されます）。",
       "一覧の「未対応コメントありのみ」で、対応が残っている問題だけに絞り込めます。"]],
+    ["ふりがな", ["問題文の「草薙剣（くさなぎのつるぎ）」のようなカッコ書きの読みは、文字の上に小さく表示されます。",
+      "右上の「ふりがな ON／OFF」で、カッコ書きのままの表示に切り替えられます（この端末だけの設定です）。"]],
   ]},
   guest: { title:"ゲスト用 操作マニュアル", sec:[
     ["ログイン", ["「ゲスト」を選び、所属（地域名）・名前・ゲストパスワードを入力します。",
@@ -915,6 +1092,8 @@ const HELP = {
       "問題を開き、下の欄にコメントを入力して「保存」を押すと送信されます。",
       "自分のコメントは「編集」から直して「保存」を押すと更新されます。投稿者と投稿・編集時刻が記録されます。",
       "ホストが対応を終えたコメントには「対応済」と表示されます。"]],
+    ["ふりがな", ["問題文のカッコ書きの読みは、文字の上に小さく表示されます。",
+      "右上の「ふりがな ON／OFF」で、カッコ書きのままの表示に切り替えられます（この端末だけの設定です）。"]],
   ]},
   owner: { title:"オーナー用 操作マニュアル", sec:[
     ["問題管理", ["Excelで見出し行ごと範囲をコピーし、「まとめて登録」に貼り付けると列名で自動判別して登録します。",
@@ -923,7 +1102,9 @@ const HELP = {
     ["結果閲覧", ["ホストと同じ画面で、全員の入力・コメント・ブックマークを確認できます。コメントの削除もできます。"]],
     ["設定・パスワード", ["大会名、ホスト・ゲスト・オーナーの各パスワードを設定します。",
       "「全問題をゲストに公開」で、読まれていない問題もゲストに表示できます（チェック会後のコメント用）。",
-      "「公開状態をリセット」で全問題を未読に戻せます（リハーサル後、本番前など）。"]],
+      "「公開状態をリセット」で全問題を未読に戻せます（リハーサル後、本番前など）。",
+      "データの置き場所はパスワードから作られます。パスワードを知らない人は、リンクを知っていてもデータを読めません。",
+      "オーナーパスワードはどこにも保存されないため、忘れないよう管理してください。"]],
   ]}
 };
 function openHelp(){

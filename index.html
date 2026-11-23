@@ -252,7 +252,8 @@ const S = {
   me:null,            // {role,name,region,key}
   view:"select",      // select | login | list | rehearsal | detail | gdetail | oq | oqedit | oset
   mode:null,          // host: rehearsal|results ; owner: oq|results|oset ; guest: comment
-  loginRole:null, qid:null, search:"", onlyOpen:false,
+  loginRole:null, qid:null, search:"", onlyOpen:false, onlyDone:false, doneBy:"",
+  gmeta:{},           // ゲスト側の設定（オーナー用：Discord通知先など）
   draft:null,         // rehearsal draft {qid,result,slashes:Set}
   editingId:null, editQ:null
 };
@@ -299,6 +300,11 @@ function subscribeAll(){
     if(role==="owner"){ S.ownerDoc=s.data(); if(S.view==="oset") renderOwnerSettings(); }
   },()=>{}));
   unsubs.push(ROOT().doc(role==="guest"?SP.gdata:SP.data).onSnapshot(s=>{ S.meta=s.data()||{}; setTitle(); live(); },()=>{}));
+  if(role==="owner") unsubs.push(ROOT().doc(SP.gdata).onSnapshot(s=>{
+    S.gmeta=s.data()||{};
+    const inp=$("#dwh"); if(inp && document.activeElement!==inp && inp.dataset.dirty!=="1") inp.value=S.gmeta.discordWebhook||"";
+    const st=$("#dwhstate"); if(st) st.outerHTML=dwhState();
+  },()=>{}));
   if(role==="guest"){
     unsubs.push(Gc("pub").onSnapshot(s=>{ S.questions=sortQ(s.docs.map(d=>({id:d.id,...d.data()}))); S.loaded.q=true; live(); }, err("問題")));
   } else {
@@ -514,13 +520,19 @@ function renderList(){
   $("#app").innerHTML=`<h2>${titles[S.mode]}</h2>
   <div class="filterrow">
     <input type="text" class="search" id="srch" placeholder="問題文・解答で検索" value="${esc(S.search)}" style="flex:1;min-width:180px;margin:0">
-    ${S.mode==="results"?`<label class="chk"><input type="checkbox" id="onlyOpen" ${S.onlyOpen?"checked":""}>未対応コメントありのみ</label>`:""}
+    ${S.mode==="results"?`<label class="chk"><input type="checkbox" id="onlyOpen" ${S.onlyOpen?"checked":""}>未対応コメントありのみ</label>
+    <label class="chk"><input type="checkbox" id="onlyDone" ${S.onlyDone?"checked":""}>対応済みのみ</label>
+    <select id="doneBy" aria-label="対応者で絞り込み" style="width:auto;min-width:150px;padding:7px 10px;font-size:14px"></select>
+    <button class="btn sm" id="csvbtn">CSV出力</button>`:""}
     ${S.mode==="comment"?`<label class="chk"><input type="checkbox" id="onlyBm" ${S.onlyBm?"checked":""}>★ブックマークのみ</label>`:""}
   </div>
   ${S.mode==="comment"?'<p class="muted" style="margin:0 0 8px">読まれた問題が順次ここに追加されます。☆を押すとブックマークできます。</p>':""}
   <ul class="qlist" id="qlist"></ul>`;
   $("#srch").oninput=e=>{ S.search=e.target.value; renderListBody(); };
-  if($("#onlyOpen")) $("#onlyOpen").onchange=e=>{ S.onlyOpen=e.target.checked; renderListBody(); };
+  if($("#onlyOpen")) $("#onlyOpen").onchange=e=>{ S.onlyOpen=e.target.checked; if(S.onlyOpen){ S.onlyDone=false; S.doneBy=""; $("#onlyDone").checked=false; } renderListBody(); };
+  if($("#onlyDone")) $("#onlyDone").onchange=e=>{ S.onlyDone=e.target.checked; if(S.onlyDone){ S.onlyOpen=false; $("#onlyOpen").checked=false; } renderListBody(); };
+  if($("#doneBy")) $("#doneBy").onchange=e=>{ S.doneBy=e.target.value; if(S.doneBy){ S.onlyOpen=false; $("#onlyOpen").checked=false; } renderListBody(); };
+  if($("#csvbtn")) $("#csvbtn").onclick=exportCSV;
   if($("#onlyBm")) $("#onlyBm").onchange=e=>{ S.onlyBm=e.target.checked; renderListBody(); };
   renderListBody();
 }
@@ -529,12 +541,49 @@ function filteredQuestions(){
   return navList().filter(q=>{
     if(S.mode==="comment" && S.onlyBm && !S.myBm.has(q.id)) return false;
     if(k &&!(FIELDS.map(([k])=>q[k]??"").join(" ")+(q.alt||"")).toLowerCase().includes(k)) return false;
-    if(S.mode==="results" && S.onlyOpen && !S.comments.some(c=>c.qid===q.id&&!c.done)) return false;
+    if(S.mode==="results" && (S.onlyOpen||S.onlyDone||S.doneBy) && !S.comments.some(c=>c.qid===q.id&&commentPass(c))) return false;
     return true;
   });
 }
+/* コメントの絞り込み条件（未対応のみ／対応済みのみ／対応者） */
+function commentPass(c){
+  if(S.onlyOpen && c.done) return false;
+  if(S.onlyDone && !c.done) return false;
+  if(S.doneBy && !(c.done && (c.doneBy||"")===S.doneBy)) return false;
+  return true;
+}
+// 対応者のプルダウン（対応済みのコメントに残っている名前から自動で作る）
+function refreshDoneBy(){
+  const sel=$("#doneBy"); if(!sel) return;
+  const names=[...new Set(S.comments.filter(c=>c.done&&c.doneBy).map(c=>c.doneBy))].sort((a,b)=>a.localeCompare(b,"ja"));
+  if(S.doneBy && !names.includes(S.doneBy)) names.unshift(S.doneBy);
+  const cnt=n=>S.comments.filter(c=>c.done&&c.doneBy===n).length;
+  const html=`<option value="">対応者：すべて</option>`+names.map(n=>`<option value="${esc(n)}" ${n===S.doneBy?"selected":""}>${esc(n)}（${cnt(n)}件）</option>`).join("");
+  if(sel.dataset.h!==html){ sel.innerHTML=html; sel.dataset.h=html; }
+}
+/* CSV出力：表示中の問題に付いたコメントを、絞り込み条件どおりに書き出す */
+function exportCSV(){
+  const qs=filteredQuestions(), order=new Map(qs.map((q,i)=>[q.id,i]));
+  const rows=S.comments.filter(c=>order.has(c.qid)&&commentPass(c))
+    .sort((a,b)=>order.get(a.qid)-order.get(b.qid)||(a.createdAt||0)-(b.createdAt||0));
+  if(!rows.length){ toast("出力するコメントがありません"); return; }
+  const p=n=>String(n).padStart(2,"0");
+  const dt=ms=>{ if(!ms) return ""; const d=new Date(ms); return `${d.getFullYear()}/${p(d.getMonth()+1)}/${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`; };
+  const head=["問題No","大ジャンル","小ジャンル","問題文","答え","コメント","投稿者（所属）","投稿者（名前）","投稿日時","最終編集日時","対応状況","対応者","対応日時"];
+  const lines=rows.map(c=>{ const q=qById(c.qid)||{};
+    return [q.no??c.qno??"",q.genre1||"",q.genre2||"",q.question||"",q.answer||"",c.text||"",c.region||"",c.name||"",dt(c.createdAt),
+      c.updatedAt&&c.updatedAt!==c.createdAt?dt(c.updatedAt):"",c.done?"対応済み":"未対応",c.done?(c.doneBy||""):"",c.done?dt(c.doneAt):""]; });
+  const q=v=>{ v=String(v??""); return /[",\r\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v; };
+  const csv="\ufeff"+[head,...lines].map(r=>r.map(q).join(",")).join("\r\n")+"\r\n";
+  const now=new Date(), stamp=`${now.getFullYear()}${p(now.getMonth()+1)}${p(now.getDate())}-${p(now.getHours())}${p(now.getMinutes())}`;
+  const name=((S.meta.title||"問題チェック").replace(/[\\/:*?"<>|\s]+/g,"_"))+"_コメント_"+stamp+".csv";
+  const a=document.createElement("a"); a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv;charset=utf-8"})); a.download=name;
+  document.body.appendChild(a); a.click(); setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); },1000);
+  toast(`✓ ${rows.length}件のコメントをCSVに出力しました`,"ok");
+}
 function renderListBody(){
   const ul=$("#qlist"); if(!ul) return;
+  refreshDoneBy();
   if(!S.loaded.q){ ul.innerHTML='<div class="loading">読み込み中…</div>'; return; }
   const qs=filteredQuestions();
   if(!qs.length){ ul.innerHTML=`<div class="empty">${
@@ -818,10 +867,25 @@ function renderGuestDetail(){
     const t=$("#newc").value.trim(); if(!t){ toast("コメントを入力してください"); return; }
     const now=Date.now(), btn=$("#savec"); btn.disabled=true;
     Gc("comments").add({qid:q.id,qno:q.no??null,authorKey:S.me.key,name:S.me.name,region:S.me.region,text:t,createdAt:now,updatedAt:now,done:false})
-      .then(()=>{ toast("✓ 送信しました","ok"); }).catch(()=>toast("送信に失敗しました","ng")).finally(()=>{ if($("#savec")) $("#savec").disabled=false; });
+      .then(()=>{ toast("✓ 送信しました","ok"); notifyDiscord(q,t); }).catch(()=>toast("送信に失敗しました","ng")).finally(()=>{ if($("#savec")) $("#savec").disabled=false; });
     $("#newc").value="";
   };
   renderGuestComments(); bindStars($("#gstar")); navBar();
+}
+
+/* ------------------------- Discord通知 ------------------------- */
+const DISCORD_RE=/^https:\/\/(?:canary\.|ptb\.)?(?:discord|discordapp)\.com\/api\/webhooks\/\d+\/[\w-]+$/;
+function sendDiscord(url, content){
+  // フォーム形式で送る（ブラウザから直接Discordへ。応答は読めないが届く）
+  const fd=new FormData();
+  fd.append("payload_json", JSON.stringify({content:String(content).slice(0,1900), username:"問題チェック", allowed_mentions:{parse:[]}}));
+  return fetch(url,{method:"POST",body:fd,mode:"no-cors"}).catch(()=>{});
+}
+function notifyDiscord(q, text){
+  const url=String(S.meta.discordWebhook||"").trim(); if(!DISCORD_RE.test(url)) return;
+  const R=rubyMap(q.question||""), qt=Array.from(q.question||"").filter((c,i)=>!R.hide.has(i)).join("").replace(/\s+/g," ");
+  const genre=[q.genre1,q.genre2].filter(Boolean).join("／");
+  sendDiscord(url, `💬 **新しいコメント**　No.${q.no??""}${genre?"（"+genre+"）":""}\n**${S.me.name}**（${S.me.region}）\n${text}\n> 問題：${qt.slice(0,60)}${qt.length>60?"…":""}`);
 }
 
 /* ------------------------- guest: live (チェック会中) ------------------------- */
@@ -1003,8 +1067,26 @@ function renderOwnerSettings(){
       <p class="muted">通常は、ホストが○・×・スルーを押した問題だけがゲストに届きます（まだ読まれていない問題のデータはゲストの端末に送られません）。現在 <b>${S.questions.filter(q=>q.releasedAt).length}</b> / ${S.questions.length} 問が読まれて公開済みです。</p>
       <label class="chk" style="margin:6px 0 12px"><input type="checkbox" id="relall" ${st.releaseAll?"checked":""}>全問題をゲストに公開する（読まれていない問題も表示）</label>
       <div><button class="btn danger sm" id="relreset">公開状態をリセット（全問を未読に戻す）</button></div></div>
+    <div class="card"><h3 style="margin-top:0">Discord通知（新しいコメント） ${dwhState()}</h3>
+      <p class="muted">ゲストがコメントを投稿すると、Discordのチャンネルに通知します。Discordで「チャンネルの編集 → 連携サービス → ウェブフック」から作ったURLを貼り付けて保存してください。空欄で保存すると通知を止めます。</p>
+      <input type="text" id="dwh" value="${esc(S.gmeta.discordWebhook||"")}" placeholder="https://discord.com/api/webhooks/…" autocomplete="off" spellcheck="false">
+      <div class="row" style="margin-top:8px"><button class="btn pri" id="dwhsave">保存</button><button class="btn" id="dwhtest">テスト送信</button></div>
+      <p class="muted">※ このURLはゲストの端末から通知を送るために使うので、ゲストパスワードを知っている人なら技術的には取り出せます。通知専用のチャンネルを作って使うのがおすすめです。</p></div>
     ${pwRow("host")}${pwRow("guest")}${pwRow("owner")}
     <div class="card"><h3 style="margin-top:0">参加者の状況</h3><div id="ppl"></div></div>`;
+  $("#dwh").oninput=e=>{ e.target.dataset.dirty="1"; };
+  $("#dwhsave").onclick=async()=>{
+    const v=$("#dwh").value.trim();
+    if(v && !DISCORD_RE.test(v)){ toast("DiscordのウェブフックURLの形ではありません","ng"); return; }
+    try{ await ROOT().doc(SP.gdata).set({discordWebhook:v},{merge:true}); $("#dwh").dataset.dirty=""; toast(v?"✓ 通知先を保存しました":"通知を止めました","ok"); }
+    catch(e){ toast("保存に失敗しました: "+e.message,"ng"); }
+  };
+  $("#dwhtest").onclick=()=>{
+    const v=$("#dwh").value.trim();
+    if(!DISCORD_RE.test(v)){ toast("先に正しいURLを入力してください","ng"); return; }
+    sendDiscord(v, `✅ テスト通知：「${S.meta.title||"問題チェック"}」の新しいコメントがここに届きます`);
+    toast("テスト送信しました。Discordに届いたか確認してください","ok");
+  };
   $("#relall").onchange=async e=>{
     const on=e.target.checked; e.target.disabled=true;
     try{
@@ -1042,6 +1124,7 @@ function renderOwnerSettings(){
     : '<div class="empty">まだ入力はありません</div>';
 }
 
+const dwhState=()=>`<span class="bd ${DISCORD_RE.test(S.gmeta.discordWebhook||"")?"done":""}" id="dwhstate">${DISCORD_RE.test(S.gmeta.discordWebhook||"")?"通知ON":"通知OFF"}</span>`;
 /* パスワードの設定：新しい入口を作り、古い入口を消す（データ本体は動かさない） */
 async function setPassword(r, pw){
   const id=loginIdFor(r,pw), od={...(S.ownerDoc||{})};
@@ -1075,7 +1158,9 @@ const HELP = {
     ["結果閲覧", ["「結果閲覧」タブで問題を選ぶと、全ホストの○×・スラッシュ位置・入力者・時刻が見られます。",
       "ゲストのコメントと、★ブックマークを付けたゲストも表示されます。",
       "コメントへの対応が終わったら「対応済み」にチェックを入れます（全員に共有されます）。",
-      "一覧の「未対応コメントありのみ」で、対応が残っている問題だけに絞り込めます。"]],
+      "一覧の「未対応コメントありのみ」で、対応が残っている問題だけに絞り込めます。",
+      "「対応済みのみ」や「対応者」のプルダウンで、対応済みのコメントがある問題や、特定の人が対応した問題だけに絞り込めます。",
+      "「CSV出力」で、表示中の問題に付いたコメント（問題No・問題文・コメント・投稿者・日時・対応状況・対応者）をExcelで開けるファイルに書き出します。絞り込み中は、その条件に合うコメントだけが出力されます。"]],
     ["ふりがな", ["問題文の「草薙剣（くさなぎのつるぎ）」のようなカッコ書きの読みは、文字の上に小さく表示されます。",
       "右上の「ふりがな ON／OFF」で、カッコ書きのままの表示に切り替えられます（この端末だけの設定です）。"]],
   ]},
@@ -1099,10 +1184,12 @@ const HELP = {
     ["問題管理", ["Excelで見出し行ごと範囲をコピーし、「まとめて登録」に貼り付けると列名で自動判別して登録します。",
       "列：No／大ジャンル／小ジャンル／問題形式／解答形式／時事／字数／問題文／答え／スペルなど／○／△／×",
       "1問ずつの追加・編集・削除もできます。字数が空欄なら自動で数えます。"]],
-    ["結果閲覧", ["ホストと同じ画面で、全員の入力・コメント・ブックマークを確認できます。コメントの削除もできます。"]],
+    ["結果閲覧", ["ホストと同じ画面で、全員の入力・コメント・ブックマークを確認できます。コメントの削除もできます。",
+      "対応済み・対応者での絞り込みと、コメントのCSV出力ができます。"]],
     ["設定・パスワード", ["大会名、ホスト・ゲスト・オーナーの各パスワードを設定します。",
       "「全問題をゲストに公開」で、読まれていない問題もゲストに表示できます（チェック会後のコメント用）。",
       "「公開状態をリセット」で全問題を未読に戻せます（リハーサル後、本番前など）。",
+      "「Discord通知」にウェブフックURLを保存すると、ゲストの新しいコメントがDiscordに届きます。",
       "データの置き場所はパスワードから作られます。パスワードを知らない人は、リンクを知っていてもデータを読めません。",
       "オーナーパスワードはどこにも保存されないため、忘れないよう管理してください。"]],
   ]}

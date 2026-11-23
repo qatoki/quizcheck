@@ -328,7 +328,16 @@ function subscribeAll(){
 }
 /* 公開（＝ホストが○×スルーを押して読まれた）判定。ゲストには公開済みの問題しか届かない */
 const isReleased = q => S.me && S.me.role==="guest" ? true : !!(S.meta.releaseAll || q.releasedAt);
-const navList = () => S.questions;
+// 結果閲覧で絞り込み中は、絞り込んだ問題の中だけで「前の問題／次の問題」を移動する
+const navFiltered = () => S.mode==="results" && !!(S.onlyOpen||S.onlyDone||S.doneBy||S.search.trim());
+const navList = () => navFiltered() ? filteredQuestions() : S.questions;
+// 今の問題が絞り込みから外れても（対応済みにした等）、元の並び順で前後の問題を探す
+function navNeighbors(){
+  const L=navList(), i=L.findIndex(q=>q.id===S.qid);
+  if(i>=0) return {prev:L[i-1]||null, next:L[i+1]||null, i, n:L.length};
+  const all=S.questions, pos=all.findIndex(q=>q.id===S.qid), at=q=>all.indexOf(q);
+  return {prev:[...L].reverse().find(q=>at(q)<pos)||null, next:L.find(q=>at(q)>pos)||null, i:-1, n:L.length};
+}
 // 全ホストのスラッシュを重ねたもの（over: 自分の入力中の内容で置き換える）
 function unionSlashes(qid, over){
   const s=new Set();
@@ -538,7 +547,7 @@ function renderList(){
 }
 function filteredQuestions(){
   const k=S.search.trim().toLowerCase();
-  return navList().filter(q=>{
+  return S.questions.filter(q=>{
     if(S.mode==="comment" && S.onlyBm && !S.myBm.has(q.id)) return false;
     if(k &&!(FIELDS.map(([k])=>q[k]??"").join(" ")+(q.alt||"")).toLowerCase().includes(k)) return false;
     if(S.mode==="results" && (S.onlyOpen||S.onlyDone||S.doneBy) && !S.comments.some(c=>c.qid===q.id&&commentPass(c))) return false;
@@ -737,21 +746,23 @@ function answerHTML(q){
   </dl>${chips.length?`<div class="chips">${chips.map(([k,v])=>`<span>${k}：${esc(v)}</span>`).join("")}</div>`:""}`;
 }
 function navBar(){
-  const i=qIndex(S.qid), n=navList().length;
+  const N=navNeighbors(), f=navFiltered();
   setBbar(`<div class="bbar"><div class="in">
-    <button class="btn" id="nprev" ${i<=0?"disabled":""}>◀ 前の問題</button>
+    <button class="btn" id="nprev" ${N.prev?"":"disabled"}>◀ 前の問題</button>
     <button class="btn" id="nlist">一覧に戻る</button>
-    <button class="btn" id="nnext" ${i>=n-1?"disabled":""}>次の問題 ▶</button></div></div>`);
+    <button class="btn" id="nnext" ${N.next?"":"disabled"}>次の問題 ▶</button></div></div>`);
   const go=d=>{
     if(!leaveCheck()) return;
     if(S.view==="rehearsal") saveDraft();
     if(d===0){ S.view="list"; S.qid=null; render(); return; }
-    const L=navList(), j=qIndex(S.qid)+d; if(j<0||j>=L.length) return;
-    openQuestion(L[j].id);
+    const t=navNeighbors()[d<0?"prev":"next"]; if(!t) return;
+    openQuestion(t.id);
   };
   $("#nprev").onclick=()=>go(-1); $("#nnext").onclick=()=>go(1); $("#nlist").onclick=()=>go(0);
 }
-function qHeader(q){ const i=qIndex(q.id); return `<div class="qmeta"><div><b>No.${esc(q.no??"")}</b>${genreHTML(q)}</div><span class="muted">${i+1} / ${navList().length}</span></div>`; }
+function qHeader(q){ const i=qIndex(q.id), n=navList().length, f=navFiltered();
+  const lab = f ? (S.onlyOpen?"未対応ありの問題":S.onlyDone||S.doneBy?"対応済みありの問題":"検索結果")+" " : "";
+  return `<div class="qmeta"><div><b>No.${esc(q.no??"")}</b>${genreHTML(q)}</div><span class="muted" id="qpos">${lab}${i>=0?i+1:"−"} / ${n}</span></div>`; }
 
 /* ------------------------- host: rehearsal ------------------------- */
 function myRehearsal(qid){ return S.rehearsals.find(r=>r.qid===qid&&r.userKey===S.me.key); }
@@ -813,6 +824,7 @@ function renderDetail(){
 function renderDetailLive(){
   const q=qById(S.qid); if(!q){ S.view="list"; render(); return; }
   const rl=$("#rlive"), cl=$("#clive"); if(!rl) return;
+  navBar(); const qp=$("#qpos"); if(qp){ const t=document.createElement("div"); t.innerHTML=qHeader(q); qp.replaceWith(t.querySelector("#qpos")); }
   const rs=S.rehearsals.filter(r=>r.qid===q.id).sort((a,b)=>(b.updatedAt||0)-(a.updatedAt||0));
   const cnt=k=>rs.filter(r=>r.result===k).length;
   rl.innerHTML = rs.length ? `<div class="summary">${["o","x","t"].map(k=>`<span class="bd ${k}">${RES[k].mark} ${cnt(k)}</span>`).join("")}<span class="bd">未選択 ${rs.filter(r=>!r.result).length}</span></div>`+
